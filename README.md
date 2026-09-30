@@ -6,25 +6,25 @@ Module 1 implements a pet profile from Expo through a Spring Boot API to Postgre
 
 Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
 
-1. Start PostgreSQL and MinIO from the repository root:
+1. Start PostgreSQL and SeaweedFS from the repository root:
 
    ~~~sh
-   docker compose up -d postgres minio minio-init
+   docker compose up -d postgres seaweedfs
    ~~~
 
 2. Run the API:
 
    ~~~sh
    cd backend
-   export S3_ACCESS_KEY=wagwagminio
-   export S3_SECRET_KEY=wagwagsecret
+   export S3_ACCESS_KEY=dev-access
+   export S3_SECRET_KEY=dev-secret
    export S3_BUCKET=wagwag-avatars
-   export S3_ENDPOINT=http://localhost:9000
-   export S3_PUBLIC_BASE_URL=http://localhost:9000/wagwag-avatars
+   export S3_ENDPOINT=http://localhost:8333
+   export S3_PUBLIC_BASE_URL=http://localhost:8333/wagwag-avatars
    ./mvnw spring-boot:run
    ~~~
 
-   Flyway creates `users` and `pets` and seeds pet ID 1. The API listens on port 8080. MinIO's console is at `http://localhost:9001`.
+   Flyway creates `users` and `pets` and seeds pet ID 1. The API listens on port 8080. SeaweedFS creates the `wagwag-avatars` bucket and serves S3-compatible objects on port 8333. The local SeaweedFS gateway runs without authentication; configure credentials and public image access separately outside local development.
 
 3. Run the app in another terminal:
 
@@ -35,7 +35,7 @@ Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
    npm start
    ~~~
 
-   For a physical phone, replace `localhost` in `mobile/.env` and the API's `S3_ENDPOINT` and `S3_PUBLIC_BASE_URL` with the computer's LAN IP. Both the API and MinIO must be reachable by the phone. Android emulators can use `10.0.2.2` for the host. Restart Expo after editing `.env`.
+   For a physical phone, replace `localhost` in `mobile/.env` and the API's `S3_ENDPOINT` and `S3_PUBLIC_BASE_URL` with the computer's LAN IP. Both the API and SeaweedFS must be reachable by the phone. Android emulators can use `10.0.2.2` for the host. Restart Expo after editing `.env`.
 
 ## API
 
@@ -59,4 +59,4 @@ cd backend && ./mvnw test
 cd mobile && npm run typecheck
 ~~~
 
-The backend suite runs a fast API/database smoke test and a PostgreSQL/MinIO integration test. The integration test requires a running Docker daemon and is skipped when Docker is unavailable.
+The backend suite runs a fast API/database smoke test and a PostgreSQL/SeaweedFS integration test. The integration test requires a running Docker daemon and is skipped when Docker is unavailable.

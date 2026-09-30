@@ -13,7 +13,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Base64;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,12 +26,6 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
-import software.amazon.awssdk.services.s3.model.PutBucketPolicyRequest;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -42,11 +35,9 @@ class PetApiIntegrationTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
     @Container
-    static final GenericContainer<?> minio = new GenericContainer<>("minio/minio:RELEASE.2025-09-07T16-13-09Z")
-        .withExposedPorts(9000)
-        .withEnv("MINIO_ROOT_USER", "testaccess")
-        .withEnv("MINIO_ROOT_PASSWORD", "testsecret")
-        .withCommand("server", "/data");
+    static final GenericContainer<?> storage = new GenericContainer<>("chrislusf/seaweedfs:4.48")
+        .withExposedPorts(8333)
+        .withEnv("S3_BUCKET", "wagwag-avatars");
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
@@ -54,31 +45,14 @@ class PetApiIntegrationTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("app.storage.bucket", () -> "wagwag-avatars");
-        registry.add("app.storage.endpoint", PetApiIntegrationTest::minioUrl);
-        registry.add("app.storage.public-base-url", () -> minioUrl() + "/wagwag-avatars");
+        registry.add("app.storage.endpoint", PetApiIntegrationTest::storageUrl);
+        registry.add("app.storage.public-base-url", () -> storageUrl() + "/wagwag-avatars");
         registry.add("app.storage.access-key", () -> "testaccess");
         registry.add("app.storage.secret-key", () -> "testsecret");
     }
 
-    static String minioUrl() {
-        return "http://" + minio.getHost() + ":" + minio.getMappedPort(9000);
-    }
-
-    @BeforeAll
-    static void createBucket() {
-        try (S3Client s3 = S3Client.builder()
-            .region(Region.US_EAST_1)
-            .endpointOverride(URI.create(minioUrl()))
-            .forcePathStyle(true)
-            .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create("testaccess", "testsecret")))
-            .build()) {
-            s3.createBucket(CreateBucketRequest.builder().bucket("wagwag-avatars").build());
-            String policy = """
-                {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*",
-                  "Action":["s3:GetObject"],"Resource":["arn:aws:s3:::wagwag-avatars/*"]}]}
-                """;
-            s3.putBucketPolicy(PutBucketPolicyRequest.builder().bucket("wagwag-avatars").policy(policy).build());
-        }
+    static String storageUrl() {
+        return "http://" + storage.getHost() + ":" + storage.getMappedPort(8333);
     }
 
     @Autowired MockMvc mvc;
