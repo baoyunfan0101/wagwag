@@ -1,0 +1,31 @@
+# macOS and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# React Native / Expo
+node_modules/
+.expo/
+web-build/
+dist/
+coverage/
+*.log
+
+# Native and Java build output
+android/.gradle/
+android/build/
+ios/Pods/
+build/
+target/
+.gradle/
+
+# Local service data
+*.db
+*.sqlite
+*.sqlite3
