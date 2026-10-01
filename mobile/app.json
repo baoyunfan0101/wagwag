@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "WagWag",
+    "slug": "wagwag",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "wagwag",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "icon": "./assets/icon.png"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#335A4D",
+        "foregroundImage": "./assets/icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      ["expo-image-picker", { "photosPermission": "Choose a photo for your pet's profile." }],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F8F6F0",
+          "image": "./assets/icon.png",
+          "imageWidth": 76
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

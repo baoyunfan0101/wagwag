@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: wagwag-api
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/wagwag}
+    username: ${DATABASE_USER:wagwag}
+    password: ${DATABASE_PASSWORD:wagwag}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+app:
+  allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8081,http://localhost:19006}
+  storage:
+    bucket: ${S3_BUCKET:}
+    region: ${AWS_REGION:us-east-1}
+    endpoint: ${S3_ENDPOINT:}
+    public-base-url: ${S3_PUBLIC_BASE_URL:}
+    access-key: ${S3_ACCESS_KEY:}
+    secret-key: ${S3_SECRET_KEY:}

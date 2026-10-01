@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: wagwag
+      POSTGRES_USER: wagwag
+      POSTGRES_PASSWORD: wagwag
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wagwag -d wagwag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    environment:
+      S3_BUCKET: wagwag-avatars
+    ports:
+      - "8333:8333"
+    volumes:
+      - seaweedfs_data:/data
+
+volumes:
+  postgres_data:
+  seaweedfs_data:
