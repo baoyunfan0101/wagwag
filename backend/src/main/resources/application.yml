@@ -11,7 +11,6 @@ spring:
     open-in-view: false
 
 app:
-  dev-user-id: 1
   allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8081,http://localhost:19006}
   storage:
     bucket: ${S3_BUCKET:}

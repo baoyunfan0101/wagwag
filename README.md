@@ -1,6 +1,6 @@
 # WagWag
 
-Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. A seeded development user and pet (both ID 1) keep authentication out of the first product flow, as described in the roadmap.
+Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. The `dev` profile seeds a development user and pet (both ID 1) for this first product flow, as described in the roadmap.
 
 ## Run locally
 
@@ -21,10 +21,10 @@ Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
    export S3_BUCKET=wagwag-avatars
    export S3_ENDPOINT=http://localhost:8333
    export S3_PUBLIC_BASE_URL=http://localhost:8333/wagwag-avatars
-   ./mvnw spring-boot:run
+   SPRING_PROFILES_ACTIVE=dev ./mvnw spring-boot:run
    ~~~
 
-   Flyway creates `users` and `pets` and seeds pet ID 1. The API listens on port 8080. SeaweedFS creates the `wagwag-avatars` bucket and serves S3-compatible objects on port 8333. The local SeaweedFS gateway runs without authentication; configure credentials and public image access separately outside local development.
+   Flyway creates `users` and `pets`; only the `dev` profile loads the seed migration for user and pet ID 1 and configures the development user ID. The default profile creates the schema without seed data. The API listens on port 8080. SeaweedFS creates the `wagwag-avatars` bucket and serves S3-compatible objects on port 8333. The local SeaweedFS gateway runs without authentication; configure credentials and public image access separately outside local development.
 
 3. Run the app in another terminal:
 
@@ -59,4 +59,4 @@ cd backend && ./mvnw test
 cd mobile && npm run typecheck
 ~~~
 
-The backend suite runs a fast API/database smoke test and a PostgreSQL/SeaweedFS integration test. The integration test requires a running Docker daemon and is skipped when Docker is unavailable.
+The backend suite checks both the default and development configurations, including PostgreSQL/SeaweedFS integration tests. A running Docker daemon is required.

@@ -13,11 +13,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@ActiveProfiles("dev")
 @TestPropertySource(properties = {
     "spring.datasource.url=jdbc:h2:mem:wagwag;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE",
     "spring.datasource.driver-class-name=org.h2.Driver",

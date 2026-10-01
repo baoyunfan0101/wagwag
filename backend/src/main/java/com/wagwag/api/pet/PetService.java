@@ -16,7 +16,7 @@ public class PetService {
     private final long devUserId;
 
     public PetService(PetRepository pets, UserRepository users, AvatarStorage storage,
-                      @Value("${app.dev-user-id}") long devUserId) {
+                      @Value("${app.dev-user-id:0}") long devUserId) {
         this.pets = pets;
         this.users = users;
         this.storage = storage;

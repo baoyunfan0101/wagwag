@@ -13,12 +13,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Base64;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -29,7 +31,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Testcontainers(disabledWithoutDocker = true)
+@ActiveProfiles("dev")
+@Testcontainers
 class PetApiIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
@@ -118,5 +121,50 @@ class PetApiIntegrationTest {
             assertThat(served.statusCode()).isEqualTo(200);
             assertThat(served.body()).isEqualTo(png);
         }
+    }
+
+    @Test
+    void unsupportedAvatarContentTypeIsRejected() throws Exception {
+        mvc.perform(post("/api/pets/1/avatar-uploads")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"contentType\":\"application/pdf\"}"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void invalidAndWrongPetAvatarKeysAreRejected() throws Exception {
+        for (String key : new String[] {"not-an-avatar-key", "pets/2/" + UUID.randomUUID() + ".png"}) {
+            mvc.perform(put("/api/pets/1/avatar")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"key\":\"" + key + "\"}"))
+                .andExpect(status().isBadRequest());
+        }
+    }
+
+    @Test
+    void oversizedUploadedAvatarIsRejectedByObjectMetadata() throws Exception {
+        String ticket = mvc.perform(post("/api/pets/1/avatar-uploads")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"contentType\":\"image/png\"}"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        String key = JsonPath.read(ticket, "$.key");
+        String uploadUrl = JsonPath.read(ticket, "$.uploadUrl");
+        String previousAvatarUrl = jdbc.queryForObject("SELECT avatar_url FROM pets WHERE id = 1", String.class);
+
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var uploaded = client.send(HttpRequest.newBuilder(URI.create(uploadUrl))
+                .header("Content-Type", "image/png")
+                .PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[5 * 1024 * 1024 + 1])).build(),
+                HttpResponse.BodyHandlers.discarding());
+            assertThat(uploaded.statusCode()).isEqualTo(200);
+        }
+
+        mvc.perform(put("/api/pets/1/avatar")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"key\":\"" + key + "\"}"))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT avatar_url FROM pets WHERE id = 1", String.class))
+            .isEqualTo(previousAvatarUrl);
     }
 }
