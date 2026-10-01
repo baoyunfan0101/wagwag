@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEV_PET_ID, getPet, savePet, uploadAvatar, type Gender, type Pet } from '@/lib/api';
@@ -39,6 +39,7 @@ export default function EditProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastSavedDetails = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -85,17 +86,32 @@ export default function EditProfileScreen() {
       setError('Use YYYY-MM-DD for the birthday.');
       return;
     }
+    const details = {
+      name: name.trim(), species: species.trim(), breed: breed.trim() || null,
+      gender, birthday: birthday || null, bio: bio.trim() || null,
+    };
+    const serializedDetails = JSON.stringify(details);
     setSaving(true);
     setError(null);
     try {
-      await savePet(pet.id, {
-        name: name.trim(), species: species.trim(), breed: breed.trim() || null,
-        gender, birthday: birthday || null, bio: bio.trim() || null,
-      });
-      if (image) await uploadAvatar(pet.id, image);
+      if (lastSavedDetails.current !== serializedDetails) {
+        try {
+          await savePet(pet.id, details);
+          lastSavedDetails.current = serializedDetails;
+        } catch (cause) {
+          setError(cause instanceof Error ? `Could not save profile. ${cause.message}` : 'Could not save profile.');
+          return;
+        }
+      }
+      if (image) {
+        try {
+          await uploadAvatar(pet.id, image);
+        } catch {
+          setError('Profile details were saved, but the photo upload failed. Tap Save changes to retry.');
+          return;
+        }
+      }
       router.back();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not save profile.');
     } finally {
       setSaving(false);
     }
