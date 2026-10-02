@@ -19,6 +19,20 @@ export type Pet = PetInput & {
   createdAt: string;
   updatedAt: string;
 };
+export type PetSummary = {
+  id: number;
+  name: string;
+  species: string;
+  avatarUrl: string | null;
+  followedByMe: boolean;
+};
+export type PetListPage = { items: PetSummary[]; nextPage: number | null };
+export type FollowStatus = {
+  petId: number;
+  followerCount: number;
+  followingCount: number;
+  followedByMe: boolean;
+};
 
 export type PostInput = { body: string | null; imageUrl: string | null; imageKeys?: string[] };
 export type Post = {
@@ -73,8 +87,32 @@ export function savePet(id: number, input: PetInput): Promise<Pet> {
   return request<Pet>(`/api/pets/${id}`, { method: 'PUT', body: JSON.stringify(input) });
 }
 
-export function getFeed(limit = 20, cursor?: string): Promise<FeedPage> {
-  const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+export function discoverPets(limit = 20, page = 0): Promise<PetListPage> {
+  return request<PetListPage>(`/api/pets/discover?limit=${limit}&page=${page}`);
+}
+
+export function getFollowers(id: number, limit = 20, page = 0): Promise<PetListPage> {
+  return request<PetListPage>(`/api/pets/${id}/followers?limit=${limit}&page=${page}`);
+}
+
+export function getFollowing(id: number, limit = 20, page = 0): Promise<PetListPage> {
+  return request<PetListPage>(`/api/pets/${id}/following?limit=${limit}&page=${page}`);
+}
+
+export function getFollowStatus(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/social`);
+}
+
+export function followPet(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/follow`, { method: 'POST' });
+}
+
+export function unfollowPet(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/follow`, { method: 'DELETE' });
+}
+
+export function getFeed(limit = 20, cursor?: string, following = false): Promise<FeedPage> {
+  const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${following ? '&following=true' : ''}`;
   return request<FeedPage>(`/api/feed?${query}`);
 }
 

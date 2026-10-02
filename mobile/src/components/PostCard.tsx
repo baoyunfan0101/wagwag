@@ -6,11 +6,12 @@ import { colors } from '@/lib/theme';
 type Props = {
   post: Post;
   onOpen?: () => void;
+  onPet?: () => void;
   onLike: () => void;
   likeBusy?: boolean;
 };
 
-export function PostCard({ post, onOpen, onLike, likeBusy = false }: Props) {
+export function PostCard({ post, onOpen, onPet, onLike, likeBusy = false }: Props) {
   const images = post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
   const content = <>
     <View style={styles.header}>
@@ -47,6 +48,10 @@ export function PostCard({ post, onOpen, onLike, likeBusy = false }: Props) {
         <Ionicons name="chatbubble-outline" size={19} color={colors.muted} />
         <Text style={styles.actionText}>{post.commentCount}</Text>
       </View>}
+      {onPet && <Pressable style={styles.action} onPress={onPet} accessibilityLabel={`View ${post.petName}'s profile`}>
+        <Ionicons name="paw-outline" size={19} color={colors.muted} />
+        <Text style={styles.actionText}>Pet</Text>
+      </Pressable>}
     </View>
   </View>;
 }

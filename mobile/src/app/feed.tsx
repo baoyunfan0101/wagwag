@@ -12,6 +12,7 @@ const PAGE_SIZE = 20;
 export default function FeedScreen() {
   const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
+  const [following, setFollowing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -25,16 +26,18 @@ export default function FeedScreen() {
   const lastLoadedCursor = useRef<string | null>(null);
 
   const loadFirstPage = useCallback(async (refresh = false) => {
-    if (firstPageInFlight.current) return;
     firstPageInFlight.current = true;
     const requestGeneration = ++generation.current;
     lastLoadedCursor.current = null;
     setNextCursor(null);
     setLoadMoreError(null);
     if (refresh) setRefreshing(true);
-    else setLoading(true);
+    else {
+      setLoading(true);
+      setPosts([]);
+    }
     try {
-      const page = await getFeed(PAGE_SIZE);
+      const page = await getFeed(PAGE_SIZE, undefined, following);
       if (requestGeneration !== generation.current) return;
       setPosts(page.items);
       setNextCursor(page.nextCursor);
@@ -44,11 +47,13 @@ export default function FeedScreen() {
         setError(cause instanceof Error ? cause.message : 'Could not load the feed.');
       }
     } finally {
-      firstPageInFlight.current = false;
-      setLoading(false);
-      setRefreshing(false);
+      if (requestGeneration === generation.current) {
+        firstPageInFlight.current = false;
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, []);
+  }, [following]);
 
   useFocusEffect(useCallback(() => { void loadFirstPage(); }, [loadFirstPage]));
 
@@ -60,7 +65,7 @@ export default function FeedScreen() {
     setLoadingMore(true);
     setLoadMoreError(null);
     try {
-      const page = await getFeed(PAGE_SIZE, nextCursor);
+      const page = await getFeed(PAGE_SIZE, nextCursor, following);
       if (requestGeneration !== generation.current) return;
       lastLoadedCursor.current = nextCursor;
       setPosts((current) => {
@@ -114,6 +119,7 @@ export default function FeedScreen() {
       onEndReachedThreshold={0.5}
       renderItem={({ item }) => <PostCard post={item}
         onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
+        onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.petId) } })}
         onLike={() => void toggleLike(item)} likeBusy={busyLikeId === item.id} />}
       ListHeaderComponent={<>
         <View style={styles.header}>
@@ -126,6 +132,17 @@ export default function FeedScreen() {
           </Pressable>
         </View>
         <Text style={styles.intro}>A little corner for every pet's story.</Text>
+        <View style={styles.filters}>
+          <Pressable style={[styles.filter, !following && styles.activeFilter]} onPress={() => setFollowing(false)}>
+            <Text style={[styles.filterText, !following && styles.activeFilterText]}>All posts</Text>
+          </Pressable>
+          <Pressable style={[styles.filter, following && styles.activeFilter]} onPress={() => setFollowing(true)}>
+            <Text style={[styles.filterText, following && styles.activeFilterText]}>Following</Text>
+          </Pressable>
+          <Pressable style={styles.findPets} onPress={() => router.push('/social')} accessibilityLabel="Find pets">
+            <Ionicons name="people-outline" size={21} color={colors.green} />
+          </Pressable>
+        </View>
         {error && <View style={styles.errorBox}>
           <Text style={styles.error}>{error}</Text>
           <Pressable onPress={() => void loadFirstPage()}><Text style={styles.retry}>Try again</Text></Pressable>
@@ -136,9 +153,9 @@ export default function FeedScreen() {
       </View> : !error ? <View style={styles.empty}>
         <Ionicons name="paw-outline" size={46} color={colors.accent} />
         <Text style={styles.emptyTitle}>No posts yet</Text>
-        <Text style={styles.emptyText}>Share the first WagWag moment.</Text>
-        <Pressable style={styles.button} onPress={() => router.push('/compose')}>
-          <Text style={styles.buttonText}>Create a post</Text>
+        <Text style={styles.emptyText}>{following ? 'Follow pets to see their posts here.' : 'Share the first WagWag moment.'}</Text>
+        <Pressable style={styles.button} onPress={() => router.push(following ? '/social' : '/compose')}>
+          <Text style={styles.buttonText}>{following ? 'Find pets' : 'Create a post'}</Text>
         </Pressable>
       </View> : null}
       ListFooterComponent={posts.length > 0 ? <View style={styles.footer}>
@@ -161,6 +178,12 @@ const styles = StyleSheet.create({
   title: { color: colors.ink, fontSize: 22, fontWeight: '900' },
   compose: { width: 42, height: 42, borderRadius: 13, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   intro: { color: colors.muted, fontSize: 14, marginBottom: 22 },
+  filters: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 18 },
+  filter: { paddingHorizontal: 15, paddingVertical: 10, borderRadius: 12, backgroundColor: colors.card },
+  activeFilter: { backgroundColor: colors.green },
+  filterText: { color: colors.muted, fontWeight: '800', fontSize: 13 },
+  activeFilterText: { color: 'white' },
+  findPets: { marginLeft: 'auto', width: 39, height: 39, borderRadius: 12, backgroundColor: colors.greenPale, alignItems: 'center', justifyContent: 'center' },
   center: { minHeight: 240, justifyContent: 'center' },
   empty: { minHeight: 360, backgroundColor: colors.card, borderRadius: 24, alignItems: 'center', justifyContent: 'center', padding: 28 },
   emptyTitle: { color: colors.ink, fontSize: 22, fontWeight: '800', marginTop: 15 },
