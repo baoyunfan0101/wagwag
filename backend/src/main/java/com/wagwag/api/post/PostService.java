@@ -82,14 +82,21 @@ public class PostService {
     public PostResponse get(long id) { return response(find(id)); }
 
     @Transactional(readOnly = true)
-    public FeedPage feed(int limit, String cursor) {
+    public FeedPage feed(int limit, String cursor, boolean following) {
         if (limit < 1 || limit > 50) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Feed limit must be between 1 and 50");
         }
         FeedCursor after = decodeCursor(cursor);
         PageRequest page = PageRequest.of(0, limit + 1);
-        List<Post> rows = after == null ? posts.findFeed(page)
-            : posts.findFeedAfter(after.createdAt(), after.id(), page);
+        List<Post> rows;
+        if (following) {
+            long petId = actor().getId();
+            rows = after == null ? posts.findFollowingFeed(petId, page)
+                : posts.findFollowingFeedAfter(petId, after.createdAt(), after.id(), page);
+        } else {
+            rows = after == null ? posts.findFeed(page)
+                : posts.findFeedAfter(after.createdAt(), after.id(), page);
+        }
         boolean hasMore = rows.size() > limit;
         List<Post> selected = hasMore ? rows.subList(0, limit) : rows;
         if (selected.isEmpty()) return new FeedPage(List.of(), null);
