@@ -14,21 +14,44 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("dev")
-@TestPropertySource(properties = {
-    "spring.datasource.url=jdbc:h2:mem:wagwag;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE",
-    "spring.datasource.driver-class-name=org.h2.Driver",
-    "spring.datasource.username=sa",
-    "spring.datasource.password="
-})
+@Testcontainers
 class PetApiSmokeTest {
+    @Container
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+
+    @DynamicPropertySource
+    static void database(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", postgres::getJdbcUrl);
+        registry.add("spring.datasource.username", postgres::getUsername);
+        registry.add("spring.datasource.password", postgres::getPassword);
+    }
+
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
+    @Autowired DevelopmentSeed seed;
+
+    @Test
+    void developmentFixturesArePresentAndRepeatedSeedingIsSafe() {
+        String mochiName = jdbc.queryForObject("SELECT name FROM pets WHERE id = 1", String.class);
+        assertThat(mochiName).startsWith("Mochi");
+        assertThat(jdbc.queryForObject("SELECT name FROM pets WHERE id = 1000", String.class)).isEqualTo("Biscuit");
+        Long usersBefore = jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class);
+        Long petsBefore = jdbc.queryForObject("SELECT COUNT(*) FROM pets", Long.class);
+        seed.run(null);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class)).isEqualTo(usersBefore);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pets", Long.class)).isEqualTo(petsBefore);
+        assertThat(jdbc.queryForObject("SELECT name FROM pets WHERE id = 1", String.class)).isEqualTo(mochiName);
+    }
 
     @Test
     void profileRoundTrip() throws Exception {
