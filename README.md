@@ -50,7 +50,8 @@ Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
 | PUT | `/api/pets/{id}/avatar` | Verify the uploaded image and save its URL |
 | POST | `/api/posts` | Create a text or image-link post as development pet 1 |
 | GET | `/api/posts/{id}` | Read a post |
-| GET | `/api/feed` | Read posts newest first |
+| GET | `/api/feed?limit=20` | Read the first page of posts, newest first |
+| GET | `/api/feed?limit=20&cursor=...` | Read the next page using the previous `nextCursor` |
 | POST | `/api/posts/{id}/likes` | Like a post |
 | DELETE | `/api/posts/{id}/likes` | Unlike a post |
 | POST | `/api/posts/{id}/comments` | Add a comment |
@@ -59,6 +60,8 @@ Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
 The avatar request body is `{ "contentType": "image/jpeg" }`. Upload the bytes to the returned `uploadUrl` using HTTP PUT and the same `Content-Type`, then send `{ "key": "..." }` to the avatar endpoint. Images must be JPEG, PNG, or WebP and no larger than 5 MB. The database stores only the URL. Set `S3_PUBLIC_BASE_URL` to the public bucket or CDN prefix in a deployed environment. If the client runs in a browser, configure the storage bucket's CORS policy to allow PUT from the web app origin.
 
 A post request uses `{ "body": "Hello!", "imageUrl": null }`; either text or a public HTTP(S) image URL is required. Posts, likes, and comments are persisted in PostgreSQL. The post image URL is stored in `post_media` without copying image bytes into the database.
+
+The feed returns `{ "items": [...], "nextCursor": "..." }` in chronological newest-first order, with ID as the tie-breaker. `limit` defaults to 20 and must be between 1 and 50. A null `nextCursor` means there are no more posts. Clients should pass the cursor back unchanged and treat it as opaque.
 
 The fixed development identity only supports local development; it is not an authentication mechanism. Before public deployment, replace it with authenticated user identity and private authorization policy.
 For AWS, leave `S3_ACCESS_KEY` and `S3_SECRET_KEY` unset to use the standard AWS credential chain.
