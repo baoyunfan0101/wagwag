@@ -81,6 +81,11 @@ export default function ProfileScreen() {
           <Pressable style={styles.primaryButton} onPress={() => router.push('/edit')}>
             <Ionicons name="create-outline" size={19} color="white" /><Text style={styles.primaryText}>Edit profile</Text>
           </Pressable>
+          <Pressable style={styles.privacyButton}
+            onPress={() => router.push({ pathname: '/pet/[id]', params: { id: String(DEV_PET_ID) } })}>
+            <Ionicons name="lock-closed-outline" size={18} color={colors.green} />
+            <Text style={styles.privacyText}>Privacy and follow requests</Text>
+          </Pressable>
           <Text style={styles.footer}>Made for the pets who make life better.</Text>
         </> : null}
     </ScrollView>
@@ -121,6 +126,9 @@ const styles = StyleSheet.create({
   bio: { color: colors.ink, lineHeight: 23, fontSize: 15 },
   primaryButton: { backgroundColor: colors.accent, borderRadius: 17, minHeight: 56, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 9, marginTop: 25, paddingHorizontal: 22 },
   primaryText: { color: 'white', fontSize: 16, fontWeight: '800' },
+  privacyButton: { minHeight: 52, borderRadius: 16, backgroundColor: colors.greenPale,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 12 },
+  privacyText: { color: colors.green, fontSize: 14, fontWeight: '800' },
   inlineError: { color: colors.accent, marginTop: 16 },
   footer: { textAlign: 'center', marginTop: 24, color: '#9AA49C', fontSize: 12 },
 });

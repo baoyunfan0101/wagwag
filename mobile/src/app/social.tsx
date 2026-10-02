@@ -4,17 +4,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  DEV_PET_ID, discoverPets, followPet, getFollowStatus, getFollowers, getFollowing, getPet, unfollowPet,
+  DEV_PET_ID, approveFollowRequest, declineFollowRequest, discoverPets, followPet,
+  getFollowRequests, getFollowStatus, getFollowers, getFollowing, getPet, unfollowPet,
   type FollowStatus, type PetListPage, type PetSummary,
 } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
-type Mode = 'discover' | 'following' | 'followers';
+type Mode = 'discover' | 'following' | 'followers' | 'requests';
 const PAGE_SIZE = 20;
 
 function listPage(mode: Mode, petId: number, page: number): Promise<PetListPage> {
   if (mode === 'following') return getFollowing(petId, PAGE_SIZE, page);
   if (mode === 'followers') return getFollowers(petId, PAGE_SIZE, page);
+  if (mode === 'requests') return getFollowRequests(petId, PAGE_SIZE, page);
   return discoverPets(PAGE_SIZE, page);
 }
 
@@ -120,17 +122,33 @@ export default function SocialScreen() {
     if (busyId !== null) return;
     setBusyId(pet.id);
     try {
-      const status = await (pet.followedByMe ? unfollowPet(pet.id) : followPet(pet.id));
+      const status = await (pet.followedByMe || pet.requestedByMe ? unfollowPet(pet.id) : followPet(pet.id));
       if (mode === 'following' && petId === DEV_PET_ID && !status.followedByMe) {
         await loadFirst();
       } else {
         setItems((current) => current.map((item) => item.id === pet.id
-          ? { ...item, followedByMe: status.followedByMe } : item));
+          ? { ...item, followedByMe: status.followedByMe, requestedByMe: status.requestedByMe } : item));
         setError(null);
       }
       getFollowStatus(petId).then(setStatus).catch(() => {});
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not update follow.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function decideRequest(followerId: number, approve: boolean) {
+    if (busyId !== null) return;
+    setBusyId(followerId);
+    try {
+      const result = await (approve ? approveFollowRequest(petId, followerId)
+        : declineFollowRequest(petId, followerId));
+      setItems((current) => current.filter((item) => item.id !== followerId));
+      setStatus(result);
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not review the request.');
     } finally {
       setBusyId(null);
     }
@@ -150,11 +168,13 @@ export default function SocialScreen() {
           <View style={styles.back} />
         </View>
         <Text style={styles.subtitle}>{petName}'s pet circle</Text>
-        <View style={styles.tabs}>{(['discover', 'following', 'followers'] as const).map((tab) =>
+        <View style={styles.tabs}>{(['discover', 'following', 'followers',
+          ...(petId === DEV_PET_ID ? ['requests' as const] : [])] as Mode[]).map((tab) =>
           <Pressable key={tab} style={[styles.tab, mode === tab && styles.activeTab]} onPress={() => setMode(tab)}>
             <Text style={[styles.tabText, mode === tab && styles.activeTabText]}>
               {tab === 'discover' ? 'Discover' : tab === 'following'
-                ? `Following ${status?.followingCount ?? ''}` : `Followers ${status?.followerCount ?? ''}`}
+                ? `Following ${status?.followingCount ?? ''}` : tab === 'followers'
+                  ? `Followers ${status?.followerCount ?? ''}` : 'Requests'}
             </Text>
           </Pressable>)}</View>
         {error && <View style={styles.errorBox}>
@@ -168,20 +188,28 @@ export default function SocialScreen() {
             <View style={styles.avatarFallback}><Ionicons name="paw" size={23} color={colors.accent} /></View>}
           <View style={styles.petText}>
             <Text style={styles.name}>{item.name}</Text>
-            <Text style={styles.species}>{item.species}</Text>
+            <Text style={styles.species}>{item.species}{item.privateProfile ? ' / Private' : ''}</Text>
           </View>
         </Pressable>
-        {item.id !== DEV_PET_ID && <Pressable style={[styles.follow, item.followedByMe && styles.following]}
+        {mode === 'requests' ? <View style={styles.requestActions}>
+          <Pressable onPress={() => void decideRequest(item.id, true)} disabled={busyId !== null}>
+            <Text style={styles.approve}>Approve</Text>
+          </Pressable>
+          <Pressable onPress={() => void decideRequest(item.id, false)} disabled={busyId !== null}>
+            <Text style={styles.decline}>Decline</Text>
+          </Pressable>
+        </View> : item.id !== DEV_PET_ID && <Pressable style={[styles.follow,
+          (item.followedByMe || item.requestedByMe) && styles.following]}
           onPress={() => void toggleFollow(item)} disabled={busyId === item.id}>
-          <Text style={[styles.followText, item.followedByMe && styles.followingText]}>
-            {item.followedByMe ? 'Following' : 'Follow'}
+          <Text style={[styles.followText, (item.followedByMe || item.requestedByMe) && styles.followingText]}>
+            {item.followedByMe ? 'Following' : item.requestedByMe ? 'Requested' : 'Follow'}
           </Text>
         </Pressable>}
       </View>}
       ListEmptyComponent={loading ? <View style={styles.center}><ActivityIndicator color={colors.accent} /></View>
         : !error ? <View style={styles.center}>
           <Ionicons name="people-outline" size={44} color={colors.accent} />
-          <Text style={styles.empty}>No pets here yet.</Text>
+          <Text style={styles.empty}>{mode === 'requests' ? 'No pending requests.' : 'No pets here yet.'}</Text>
         </View> : null}
       ListFooterComponent={items.length > 0 ? <View style={styles.footer}>
         {loadingMore ? <ActivityIndicator color={colors.accent} />
@@ -202,8 +230,8 @@ const styles = StyleSheet.create({
   back: { width: 42, height: 42, borderRadius: 13, backgroundColor: colors.card, alignItems: 'center', justifyContent: 'center' },
   title: { color: colors.ink, fontSize: 22, fontWeight: '900' },
   subtitle: { color: colors.muted, fontSize: 14, marginBottom: 18 },
-  tabs: { flexDirection: 'row', gap: 7, marginBottom: 20 },
-  tab: { flex: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, backgroundColor: colors.card },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 20 },
+  tab: { minWidth: '47%', flexGrow: 1, alignItems: 'center', paddingVertical: 11, borderRadius: 12, backgroundColor: colors.card },
   activeTab: { backgroundColor: colors.green },
   tabText: { color: colors.muted, fontSize: 12, fontWeight: '800' },
   activeTabText: { color: 'white' },
@@ -218,6 +246,9 @@ const styles = StyleSheet.create({
   following: { backgroundColor: colors.greenPale },
   followText: { color: 'white', fontSize: 12, fontWeight: '800' },
   followingText: { color: colors.green },
+  requestActions: { alignItems: 'flex-end', gap: 10 },
+  approve: { color: colors.green, fontWeight: '800' },
+  decline: { color: colors.muted, fontWeight: '800' },
   center: { minHeight: 260, alignItems: 'center', justifyContent: 'center', gap: 12 },
   empty: { color: colors.muted, textAlign: 'center' },
   errorBox: { backgroundColor: colors.accentPale, borderRadius: 13, padding: 14, marginBottom: 16 },

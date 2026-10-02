@@ -16,6 +16,7 @@ export type Pet = PetInput & {
   id: number;
   ownerId: number;
   avatarUrl: string | null;
+  privateProfile: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -24,7 +25,9 @@ export type PetSummary = {
   name: string;
   species: string;
   avatarUrl: string | null;
+  privateProfile: boolean;
   followedByMe: boolean;
+  requestedByMe: boolean;
 };
 export type PetListPage = { items: PetSummary[]; nextPage: number | null };
 export type FollowStatus = {
@@ -32,6 +35,10 @@ export type FollowStatus = {
   followerCount: number;
   followingCount: number;
   followedByMe: boolean;
+  requestedByMe: boolean;
+  privateProfile: boolean;
+  blockedByMe: boolean;
+  mutedByMe: boolean;
 };
 
 export type PostInput = { body: string | null; imageKeys: string[] };
@@ -86,6 +93,12 @@ export function savePet(id: number, input: PetInput): Promise<Pet> {
   return request<Pet>(`/api/pets/${id}`, { method: 'PUT', body: JSON.stringify(input) });
 }
 
+export function setPetPrivacy(id: number, privateProfile: boolean): Promise<Pet> {
+  return request<Pet>(`/api/pets/${id}/privacy`, {
+    method: 'PUT', body: JSON.stringify({ privateProfile }),
+  });
+}
+
 export function discoverPets(limit = 20, page = 0): Promise<PetListPage> {
   return request<PetListPage>(`/api/pets/discover?limit=${limit}&page=${page}`);
 }
@@ -98,6 +111,18 @@ export function getFollowing(id: number, limit = 20, page = 0): Promise<PetListP
   return request<PetListPage>(`/api/pets/${id}/following?limit=${limit}&page=${page}`);
 }
 
+export function getFollowRequests(id: number, limit = 20, page = 0): Promise<PetListPage> {
+  return request<PetListPage>(`/api/pets/${id}/follow-requests?limit=${limit}&page=${page}`);
+}
+
+export function approveFollowRequest(id: number, followerId: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/follow-requests/${followerId}`, { method: 'POST' });
+}
+
+export function declineFollowRequest(id: number, followerId: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/follow-requests/${followerId}`, { method: 'DELETE' });
+}
+
 export function getFollowStatus(id: number): Promise<FollowStatus> {
   return request<FollowStatus>(`/api/pets/${id}/social`);
 }
@@ -108,6 +133,22 @@ export function followPet(id: number): Promise<FollowStatus> {
 
 export function unfollowPet(id: number): Promise<FollowStatus> {
   return request<FollowStatus>(`/api/pets/${id}/follow`, { method: 'DELETE' });
+}
+
+export function blockPet(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/block`, { method: 'POST' });
+}
+
+export function unblockPet(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/block`, { method: 'DELETE' });
+}
+
+export function mutePet(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/mute`, { method: 'POST' });
+}
+
+export function unmutePet(id: number): Promise<FollowStatus> {
+  return request<FollowStatus>(`/api/pets/${id}/mute`, { method: 'DELETE' });
 }
 
 export function getFeed(limit = 20, cursor?: string, following = false): Promise<FeedPage> {
