@@ -20,6 +20,28 @@ export type Pet = PetInput & {
   updatedAt: string;
 };
 
+export type PostInput = { body: string | null; imageUrl: string | null };
+export type Post = PostInput & {
+  id: number;
+  petId: number;
+  petName: string;
+  petAvatarUrl: string | null;
+  createdAt: string;
+  likeCount: number;
+  commentCount: number;
+  likedByMe: boolean;
+};
+export type FeedPage = { items: Post[]; nextCursor: string | null };
+export type Comment = {
+  id: number;
+  postId: number;
+  petId: number;
+  petName: string;
+  petAvatarUrl: string | null;
+  body: string;
+  createdAt: string;
+};
+
 export const DEV_PET_ID = Number(process.env.EXPO_PUBLIC_DEV_PET_ID || '1');
 const baseUrl = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8080').replace(/\/$/, '');
 
@@ -46,6 +68,37 @@ export function getPet(id: number): Promise<Pet> {
 
 export function savePet(id: number, input: PetInput): Promise<Pet> {
   return request<Pet>(`/api/pets/${id}`, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+export function getFeed(limit = 20, cursor?: string): Promise<FeedPage> {
+  const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+  return request<FeedPage>(`/api/feed?${query}`);
+}
+
+export function getPost(id: number): Promise<Post> {
+  return request<Post>(`/api/posts/${id}`);
+}
+
+export function createPost(input: PostInput): Promise<Post> {
+  return request<Post>('/api/posts', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function likePost(id: number): Promise<Post> {
+  return request<Post>(`/api/posts/${id}/likes`, { method: 'POST' });
+}
+
+export function unlikePost(id: number): Promise<Post> {
+  return request<Post>(`/api/posts/${id}/likes`, { method: 'DELETE' });
+}
+
+export function getComments(id: number): Promise<Comment[]> {
+  return request<Comment[]>(`/api/posts/${id}/comments`);
+}
+
+export function createComment(id: number, body: string): Promise<Comment> {
+  return request<Comment>(`/api/posts/${id}/comments`, {
+    method: 'POST', body: JSON.stringify({ body }),
+  });
 }
 
 export async function uploadAvatar(id: number, asset: ImagePickerAsset): Promise<Pet> {

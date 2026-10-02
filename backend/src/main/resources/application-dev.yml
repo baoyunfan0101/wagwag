@@ -4,3 +4,4 @@ spring:
 
 app:
   dev-user-id: 1
+  dev-pet-id: 1
