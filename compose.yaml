@@ -24,6 +24,11 @@ services:
     volumes:
       - seaweedfs_data:/data
 
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+
 volumes:
   postgres_data:
   seaweedfs_data:

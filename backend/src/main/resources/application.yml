@@ -5,6 +5,11 @@ spring:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/wagwag}
     username: ${DATABASE_USER:wagwag}
     password: ${DATABASE_PASSWORD:wagwag}
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      connect-timeout: 250ms
+      timeout: 250ms
   flyway:
     locations: classpath:db/migration
   jackson:
@@ -17,6 +22,8 @@ spring:
 
 app:
   allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8081,http://localhost:19006}
+  follow-cache:
+    enabled: ${FOLLOW_CACHE_ENABLED:true}
   storage:
     bucket: ${S3_BUCKET:}
     region: ${AWS_REGION:us-east-1}

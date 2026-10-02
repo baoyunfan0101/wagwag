@@ -2,6 +2,8 @@ package com.wagwag.api.post;
 
 import com.wagwag.api.pet.Pet;
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.social.PetFollowRepository;
+import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.storage.PostImageStorage;
 import com.wagwag.api.storage.PostImageStorage.UploadTicket;
 import java.nio.charset.StandardCharsets;
@@ -27,11 +29,14 @@ public class PostService {
     private final PostLikeRepository likes;
     private final CommentRepository comments;
     private final PetRepository pets;
+    private final PetFollowRepository follows;
+    private final SocialRestrictions restrictions;
     private final PostImageStorage storage;
     private final long devPetId;
 
     public PostService(PostRepository posts, PostMediaRepository media, PostLikeRepository likes,
                        CommentRepository comments, PetRepository pets, PostImageStorage storage,
+                       PetFollowRepository follows, SocialRestrictions restrictions,
                        @Value("${app.dev-pet-id:0}") long devPetId) {
         this.posts = posts;
         this.media = media;
@@ -39,6 +44,8 @@ public class PostService {
         this.comments = comments;
         this.pets = pets;
         this.storage = storage;
+        this.follows = follows;
+        this.restrictions = restrictions;
         this.devPetId = devPetId;
     }
 
@@ -72,7 +79,7 @@ public class PostService {
     }
 
     @Transactional(readOnly = true)
-    public PostResponse get(long id) { return response(find(id)); }
+    public PostResponse get(long id) { return response(visiblePost(id)); }
 
     @Transactional(readOnly = true)
     public FeedPage feed(int limit, String cursor, boolean following) {
@@ -81,14 +88,16 @@ public class PostService {
         }
         FeedCursor after = decodeCursor(cursor);
         PageRequest page = PageRequest.of(0, limit + 1);
+        long actorId = actor().getId();
+        List<Long> hidden = restrictions.hiddenFeedPetIds(actorId);
+        if (hidden.isEmpty()) hidden = List.of(0L);
         List<Post> rows;
         if (following) {
-            long petId = actor().getId();
-            rows = after == null ? posts.findFollowingFeed(petId, page)
-                : posts.findFollowingFeedAfter(petId, after.createdAt(), after.id(), page);
+            rows = after == null ? posts.findFollowingFeed(actorId, hidden, page)
+                : posts.findFollowingFeedAfter(actorId, hidden, after.createdAt(), after.id(), page);
         } else {
-            rows = after == null ? posts.findFeed(page)
-                : posts.findFeedAfter(after.createdAt(), after.id(), page);
+            rows = after == null ? posts.findFeed(actorId, hidden, page)
+                : posts.findFeedAfter(actorId, hidden, after.createdAt(), after.id(), page);
         }
         boolean hasMore = rows.size() > limit;
         List<Post> selected = hasMore ? rows.subList(0, limit) : rows;
@@ -117,7 +126,7 @@ public class PostService {
 
     @Transactional
     public PostResponse like(long id) {
-        Post post = find(id);
+        Post post = visiblePost(id);
         Pet pet = actor();
         likes.insertIfAbsent(id, pet.getId());
         return response(post);
@@ -125,7 +134,7 @@ public class PostService {
 
     @Transactional
     public PostResponse unlike(long id) {
-        Post post = find(id);
+        Post post = visiblePost(id);
         Pet pet = actor();
         likes.deleteByPost_IdAndPet_Id(id, pet.getId());
         likes.flush();
@@ -134,13 +143,13 @@ public class PostService {
 
     @Transactional
     public CommentResponse comment(long id, CommentInput input) {
-        Comment comment = comments.saveAndFlush(new Comment(find(id), actor(), input.body().trim()));
+        Comment comment = comments.saveAndFlush(new Comment(visiblePost(id), actor(), input.body().trim()));
         return CommentResponse.from(comment);
     }
 
     @Transactional(readOnly = true)
     public List<CommentResponse> comments(long id) {
-        find(id);
+        visiblePost(id);
         return comments.findByPost_IdOrderByCreatedAtAscIdAsc(id).stream()
             .map(CommentResponse::from).toList();
     }
@@ -190,6 +199,18 @@ public class PostService {
     private Post find(long id) {
         return posts.findById(id).orElseThrow(() ->
             new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found"));
+    }
+
+    private Post visiblePost(long id) {
+        Post post = find(id);
+        long actorId = actor().getId();
+        long authorId = post.getPet().getId();
+        if (actorId != authorId && (restrictions.blockedEitherWay(actorId, authorId)
+                || (post.getPet().isPrivateProfile()
+                    && !follows.existsByFollower_IdAndFollowing_IdAndAcceptedTrue(actorId, authorId)))) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Post not found");
+        }
+        return post;
     }
 
     private Pet actor() {

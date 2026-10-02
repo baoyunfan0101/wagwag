@@ -33,7 +33,8 @@ class DefaultConfigurationTest {
     void defaultConfigurationCreatesCurrentSchemaWithoutDevelopmentData() {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pets", Long.class)).isZero();
-        for (String table : new String[] {"posts", "post_media", "likes", "comments", "pet_follows"}) {
+        for (String table : new String[] {"posts", "post_media", "likes", "comments",
+                "pet_follows", "pet_blocks", "pet_mutes"}) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class)).isZero();
         }
 

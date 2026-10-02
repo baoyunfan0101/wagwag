@@ -48,6 +48,9 @@ public class Pet {
     @Column(name = "avatar_url", length = 2048)
     private String avatarUrl;
 
+    @Column(name = "private_profile", nullable = false)
+    private boolean privateProfile;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -73,6 +76,7 @@ public class Pet {
     public LocalDate getBirthday() { return birthday; }
     public String getBio() { return bio; }
     public String getAvatarUrl() { return avatarUrl; }
+    public boolean isPrivateProfile() { return privateProfile; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
 
@@ -86,6 +90,7 @@ public class Pet {
     }
 
     public void setAvatarUrl(String avatarUrl) { this.avatarUrl = avatarUrl; }
+    public void setPrivateProfile(boolean privateProfile) { this.privateProfile = privateProfile; }
 
     private static String trimNullable(String value) {
         return value == null || value.isBlank() ? null : value.trim();
