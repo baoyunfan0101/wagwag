@@ -2,10 +2,13 @@ package com.wagwag.api.post;
 
 import com.wagwag.api.pet.Pet;
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.storage.PostImageStorage;
+import com.wagwag.api.storage.PostImageStorage.UploadTicket;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -25,16 +28,18 @@ public class PostService {
     private final PostLikeRepository likes;
     private final CommentRepository comments;
     private final PetRepository pets;
+    private final PostImageStorage storage;
     private final long devPetId;
 
     public PostService(PostRepository posts, PostMediaRepository media, PostLikeRepository likes,
-                       CommentRepository comments, PetRepository pets,
+                       CommentRepository comments, PetRepository pets, PostImageStorage storage,
                        @Value("${app.dev-pet-id:0}") long devPetId) {
         this.posts = posts;
         this.media = media;
         this.likes = likes;
         this.comments = comments;
         this.pets = pets;
+        this.storage = storage;
         this.devPetId = devPetId;
     }
 
@@ -42,14 +47,35 @@ public class PostService {
     public PostResponse create(PostInput input) {
         String body = trimNullable(input.body());
         String imageUrl = trimNullable(input.imageUrl());
-        if (body == null && imageUrl == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add text or an image link");
+        List<String> keys = input.imageKeys() == null ? List.of() : input.imageKeys();
+        if (body == null && imageUrl == null && keys.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add text or an image");
         }
         if (imageUrl != null) validateImageUrl(imageUrl);
+        if (imageUrl != null && !keys.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use image links or uploaded images");
+        }
+        if (keys.size() > 4 || keys.stream().anyMatch(key -> key == null || key.isBlank())
+                || new HashSet<>(keys).size() != keys.size()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use up to four distinct images");
+        }
 
-        Post post = posts.saveAndFlush(new Post(actor(), body));
-        if (imageUrl != null) media.saveAndFlush(new PostMedia(post, imageUrl));
+        Pet pet = actor();
+        List<String> urls = new ArrayList<>();
+        if (imageUrl != null) urls.add(imageUrl);
+        for (String key : keys) urls.add(storage.verifyAndGetUrl(pet.getId(), key));
+
+        Post post = posts.saveAndFlush(new Post(pet, body));
+        for (int index = 0; index < urls.size(); index++) {
+            media.save(new PostMedia(post, urls.get(index), index));
+        }
+        media.flush();
         return response(post);
+    }
+
+    @Transactional(readOnly = true)
+    public UploadTicket prepareImage(String contentType) {
+        return storage.prepare(actor().getId(), contentType);
     }
 
     @Transactional(readOnly = true)
@@ -69,9 +95,10 @@ public class PostService {
         if (selected.isEmpty()) return new FeedPage(List.of(), null);
 
         List<Long> ids = selected.stream().map(Post::getId).toList();
-        Map<Long, String> imageUrls = new HashMap<>();
-        for (Object[] row : media.firstMediaCandidates(ids)) {
-            imageUrls.putIfAbsent(((Number) row[0]).longValue(), (String) row[1]);
+        Map<Long, List<String>> imageUrls = new HashMap<>();
+        for (Object[] row : media.mediaForPosts(ids)) {
+            imageUrls.computeIfAbsent(((Number) row[0]).longValue(), ignored -> new ArrayList<>())
+                .add((String) row[1]);
         }
         Map<Long, Long> likeCounts = counts(likes.countByPostIds(ids));
         Map<Long, Long> commentCounts = counts(comments.countByPostIds(ids));
@@ -79,8 +106,9 @@ public class PostService {
         List<PostResponse> items = selected.stream().map(post -> {
             Pet pet = post.getPet();
             Long id = post.getId();
+            List<String> urls = imageUrls.getOrDefault(id, List.of());
             return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
-                post.getBody(), imageUrls.get(id), post.getCreatedAt(),
+                post.getBody(), firstUrl(urls), urls, post.getCreatedAt(),
                 likeCounts.getOrDefault(id, 0L), commentCounts.getOrDefault(id, 0L), likedIds.contains(id));
         }).toList();
         Post last = selected.getLast();
@@ -120,12 +148,16 @@ public class PostService {
     private PostResponse response(Post post) {
         Long id = post.getId();
         Pet pet = post.getPet();
-        String imageUrl = media.findFirstByPost_IdOrderBySortOrderAsc(id)
-            .map(PostMedia::getUrl).orElse(null);
+        List<String> urls = media.findByPost_IdOrderBySortOrderAsc(id).stream()
+            .map(PostMedia::getUrl).toList();
         return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
-            post.getBody(), imageUrl, post.getCreatedAt(), likes.countByPost_Id(id),
+            post.getBody(), firstUrl(urls), urls, post.getCreatedAt(), likes.countByPost_Id(id),
             comments.countByPost_Id(id),
             devPetId > 0 && likes.existsByPost_IdAndPet_Id(id, devPetId));
+    }
+
+    private static String firstUrl(List<String> urls) {
+        return urls.isEmpty() ? null : urls.getFirst();
     }
 
     private static Map<Long, Long> counts(List<Object[]> rows) {
