@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -30,7 +31,10 @@ public class PostController {
     public PostResponse get(@PathVariable long id) { return service.get(id); }
 
     @GetMapping("/feed")
-    public List<PostResponse> feed() { return service.feed(); }
+    public FeedPage feed(@RequestParam(defaultValue = "20") int limit,
+                         @RequestParam(required = false) String cursor) {
+        return service.feed(limit, cursor);
+    }
 
     @PostMapping("/posts/{id}/likes")
     public PostResponse like(@PathVariable long id) { return service.like(id); }
