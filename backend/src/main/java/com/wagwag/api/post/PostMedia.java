@@ -29,10 +29,10 @@ public class PostMedia {
 
     protected PostMedia() {}
 
-    public PostMedia(Post post, String url) {
+    public PostMedia(Post post, String url, int sortOrder) {
         this.post = post;
         this.url = url;
-        this.sortOrder = 0;
+        this.sortOrder = sortOrder;
     }
 
     public String getUrl() { return url; }

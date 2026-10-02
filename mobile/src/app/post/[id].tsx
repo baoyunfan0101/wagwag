@@ -43,10 +43,15 @@ export default function PostDetailScreen() {
   async function toggleLike() {
     if (!post || likeBusy) return;
     setLikeBusy(true);
+    setPost({ ...post, likedByMe: !post.likedByMe,
+      likeCount: post.likeCount + (post.likedByMe ? -1 : 1) });
     try {
-      setPost(await (post.likedByMe ? unlikePost(post.id) : likePost(post.id)));
+      const updated = await (post.likedByMe ? unlikePost(post.id) : likePost(post.id));
+      setPost((current) => current && { ...current,
+        likedByMe: updated.likedByMe, likeCount: updated.likeCount });
       setError(null);
     } catch (cause) {
+      setPost((current) => current && { ...current, likedByMe: post.likedByMe, likeCount: post.likeCount });
       setError(cause instanceof Error ? cause.message : 'Could not update the like.');
     } finally {
       setLikeBusy(false);
@@ -61,13 +66,22 @@ export default function PostDetailScreen() {
       return;
     }
     setSending(true);
+    const pending: Comment = {
+      id: -Date.now(), postId: post.id, petId: post.petId,
+      petName: post.petName, petAvatarUrl: post.petAvatarUrl,
+      body, createdAt: new Date().toISOString(),
+    };
+    setComments((current) => [...current, pending]);
+    setPost((current) => current && { ...current, commentCount: current.commentCount + 1 });
+    setDraft('');
     try {
       const comment = await createComment(post.id, body);
-      setComments((current) => [...current, comment]);
-      setPost((current) => current && { ...current, commentCount: current.commentCount + 1 });
-      setDraft('');
+      setComments((current) => current.map((item) => item.id === pending.id ? comment : item));
       setError(null);
     } catch (cause) {
+      setComments((current) => current.filter((item) => item.id !== pending.id));
+      setPost((current) => current && { ...current, commentCount: current.commentCount - 1 });
+      setDraft(body);
       setError(cause instanceof Error ? cause.message : 'Could not send the comment.');
     } finally {
       setSending(false);
@@ -101,7 +115,7 @@ export default function PostDetailScreen() {
             <Text style={styles.label}>Add a comment</Text>
             <TextInput style={styles.input} value={draft} onChangeText={setDraft}
               placeholder="Say something kind..." placeholderTextColor="#9BA59D"
-              multiline textAlignVertical="top" maxLength={500} />
+              multiline textAlignVertical="top" maxLength={500} editable={!sending} />
             {error && <Text style={styles.error}>{error}</Text>}
             <Pressable style={[styles.send, sending && styles.disabled]} onPress={() => void sendComment()} disabled={sending}>
               {sending ? <ActivityIndicator color="white" /> : <>

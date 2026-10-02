@@ -1,6 +1,8 @@
 package com.wagwag.api.post;
 
+import com.wagwag.api.storage.PostImageStorage.UploadTicket;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import java.net.URI;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -27,6 +29,11 @@ public class PostController {
         return ResponseEntity.created(URI.create("/api/posts/" + post.id())).body(post);
     }
 
+    @PostMapping("/posts/media-uploads")
+    public UploadTicket prepareImage(@Valid @RequestBody ImageUploadInput input) {
+        return service.prepareImage(input.contentType());
+    }
+
     @GetMapping("/posts/{id}")
     public PostResponse get(@PathVariable long id) { return service.get(id); }
 
@@ -51,4 +58,6 @@ public class PostController {
 
     @GetMapping("/posts/{id}/comments")
     public List<CommentResponse> comments(@PathVariable long id) { return service.comments(id); }
+
+    public record ImageUploadInput(@NotBlank String contentType) {}
 }

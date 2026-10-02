@@ -1,24 +1,57 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { createPost } from '@/lib/api';
+import { createPost, uploadPostImage } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
 export default function ComposeScreen() {
   const router = useRouter();
   const [body, setBody] = useState('');
   const [imageUrl, setImageUrl] = useState('');
+  const [selectedUris, setSelectedUris] = useState<string[]>([]);
+  const uploadedKeys = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function chooseImages() {
+    if (imageUrl.trim()) {
+      setError('Remove the image link before choosing photos.');
+      return;
+    }
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'], allowsMultipleSelection: true,
+        selectionLimit: 4 - selectedUris.length, orderedSelection: true,
+      });
+      if (result.canceled) return;
+      const converted = await Promise.all(result.assets.map(async (asset) => {
+        const image = await ImageManipulator.manipulateAsync(
+          asset.uri, [{ resize: { width: Math.min(asset.width, 1600) } }],
+          { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+        );
+        return image.uri;
+      }));
+      setSelectedUris((current) => [...current, ...converted].slice(0, 4));
+      setError(null);
+    } catch {
+      setError('Could not prepare the selected photos.');
+    }
+  }
 
   async function publish() {
     if (saving) return;
     const text = body.trim();
     const image = imageUrl.trim();
-    if (!text && !image) {
-      setError('Add a story or an image link.');
+    if (!text && !image && selectedUris.length === 0) {
+      setError('Add a story or a photo.');
+      return;
+    }
+    if (image && selectedUris.length > 0) {
+      setError('Use photos or an image link, not both.');
       return;
     }
     if (image && !/^https?:\/\/[^\s]+$/i.test(image)) {
@@ -28,7 +61,13 @@ export default function ComposeScreen() {
     setSaving(true);
     setError(null);
     try {
-      const post = await createPost({ body: text || null, imageUrl: image || null });
+      const imageKeys: string[] = [];
+      for (const uri of selectedUris) {
+        const key = uploadedKeys.current[uri] || await uploadPostImage(uri);
+        uploadedKeys.current[uri] = key;
+        imageKeys.push(key);
+      }
+      const post = await createPost({ body: text || null, imageUrl: image || null, imageKeys });
       router.replace({ pathname: '/post/[id]', params: { id: String(post.id) } });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not publish the post.');
@@ -53,11 +92,26 @@ export default function ComposeScreen() {
           placeholder="Tell their story..." placeholderTextColor="#9BA59D"
           multiline textAlignVertical="top" maxLength={2000} />
         <Text style={styles.counter}>{body.length}/2000</Text>
+        <Text style={styles.label}>Photos ({selectedUris.length}/4)</Text>
+        <Pressable style={styles.photoButton} onPress={() => void chooseImages()}
+          disabled={saving || selectedUris.length >= 4} accessibilityLabel="Choose post photos">
+          <Ionicons name="images-outline" size={20} color={colors.accent} />
+          <Text style={styles.photoButtonText}>Choose photos</Text>
+        </Pressable>
+        {selectedUris.length > 0 && <View style={styles.photoGrid}>{selectedUris.map((uri) =>
+          <View key={uri} style={styles.photoWrap}>
+            <Image source={{ uri }} style={styles.photo} />
+            <Pressable style={styles.removePhoto} onPress={() => setSelectedUris((current) => current.filter((item) => item !== uri))}
+              disabled={saving} accessibilityLabel="Remove photo">
+              <Ionicons name="close" size={17} color="white" />
+            </Pressable>
+          </View>)}</View>}
         <Text style={styles.label}>Image link (optional)</Text>
         <TextInput style={styles.link} value={imageUrl} onChangeText={setImageUrl}
           placeholder="https://example.com/photo.jpg" placeholderTextColor="#9BA59D"
-          autoCapitalize="none" autoCorrect={false} keyboardType="url" maxLength={2048} />
-        <Text style={styles.hint}>Paste a public image link to add a photo.</Text>
+          autoCapitalize="none" autoCorrect={false} keyboardType="url" maxLength={2048}
+          editable={selectedUris.length === 0 && !saving} />
+        <Text style={styles.hint}>Or paste a public image link when no photos are selected.</Text>
         {/^https?:\/\/[^\s]+$/i.test(imageUrl.trim()) &&
           <Image source={{ uri: imageUrl.trim() }} style={styles.preview} resizeMode="cover" />}
         {error && <Text style={styles.error}>{error}</Text>}
@@ -84,6 +138,12 @@ const styles = StyleSheet.create({
   story: { minHeight: 200, backgroundColor: colors.card, borderRadius: 20, borderWidth: 1, borderColor: colors.line, padding: 18, color: colors.ink, fontSize: 16, lineHeight: 24 },
   counter: { color: colors.muted, fontSize: 12, alignSelf: 'flex-end', marginTop: 8, marginBottom: 24 },
   label: { color: colors.ink, fontSize: 14, fontWeight: '800', marginBottom: 9 },
+  photoButton: { minHeight: 54, backgroundColor: colors.accentPale, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 15 },
+  photoButtonText: { color: colors.accent, fontWeight: '800' },
+  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 22 },
+  photoWrap: { width: '48%', height: 150 },
+  photo: { width: '100%', height: '100%', borderRadius: 14 },
+  removePhoto: { position: 'absolute', top: 7, right: 7, width: 28, height: 28, borderRadius: 14, backgroundColor: '#0009', alignItems: 'center', justifyContent: 'center' },
   link: { minHeight: 54, backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 16, color: colors.ink, fontSize: 14 },
   hint: { color: colors.muted, fontSize: 12, marginTop: 8 },
   preview: { width: '100%', height: 230, borderRadius: 18, marginTop: 18, backgroundColor: colors.greenPale },

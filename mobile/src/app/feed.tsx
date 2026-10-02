@@ -85,11 +85,18 @@ export default function FeedScreen() {
   async function toggleLike(post: Post) {
     if (busyLikeId !== null) return;
     setBusyLikeId(post.id);
+    const likedByMe = !post.likedByMe;
+    const likeCount = post.likeCount + (likedByMe ? 1 : -1);
+    setPosts((current) => current.map((item) => item.id === post.id
+      ? { ...item, likedByMe, likeCount } : item));
     try {
       const updated = await (post.likedByMe ? unlikePost(post.id) : likePost(post.id));
-      setPosts((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setPosts((current) => current.map((item) => item.id === updated.id
+        ? { ...item, likeCount: updated.likeCount, likedByMe: updated.likedByMe } : item));
       setError(null);
     } catch (cause) {
+      setPosts((current) => current.map((item) => item.id === post.id
+        ? { ...item, likedByMe: post.likedByMe, likeCount: post.likeCount } : item));
       setError(cause instanceof Error ? cause.message : 'Could not update the like.');
     } finally {
       setBusyLikeId(null);

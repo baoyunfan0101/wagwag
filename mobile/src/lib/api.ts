@@ -20,8 +20,11 @@ export type Pet = PetInput & {
   updatedAt: string;
 };
 
-export type PostInput = { body: string | null; imageUrl: string | null };
-export type Post = PostInput & {
+export type PostInput = { body: string | null; imageUrl: string | null; imageKeys?: string[] };
+export type Post = {
+  body: string | null;
+  imageUrl: string | null;
+  imageUrls: string[];
   id: number;
   petId: number;
   petName: string;
@@ -81,6 +84,31 @@ export function getPost(id: number): Promise<Post> {
 
 export function createPost(input: PostInput): Promise<Post> {
   return request<Post>('/api/posts', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export async function uploadPostImage(uri: string): Promise<string> {
+  const image = Platform.OS === 'web'
+    ? await fetch(uri).then((result) => result.blob())
+    : new File(uri);
+  if (image.size === 0 || image.size > 5 * 1024 * 1024) {
+    throw new Error('Choose an image smaller than 5 MB.');
+  }
+  const ticket = await request<{ key: string; uploadUrl: string; headers: Record<string, string> }>(
+    '/api/posts/media-uploads',
+    { method: 'POST', body: JSON.stringify({ contentType: 'image/jpeg' }) },
+  );
+  try {
+    const uploaded = await expoFetch(ticket.uploadUrl, {
+      method: 'PUT',
+      headers: ticket.headers,
+      body: image,
+    });
+    if (!uploaded.ok) throw new Error('Image upload failed. Please try again.');
+  } catch (cause) {
+    if (cause instanceof Error && cause.message.startsWith('Image upload failed')) throw cause;
+    throw new Error('Cannot reach object storage. Check its network address and CORS settings.');
+  }
+  return ticket.key;
 }
 
 export function likePost(id: number): Promise<Post> {

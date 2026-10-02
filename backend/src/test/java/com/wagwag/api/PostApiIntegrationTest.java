@@ -8,6 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.UUID;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -26,6 +34,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -37,11 +46,25 @@ class PostApiIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Container
+    static final GenericContainer<?> storage = new GenericContainer<>("chrislusf/seaweedfs:4.48")
+        .withExposedPorts(8333)
+        .withEnv("S3_BUCKET", "wagwag-avatars");
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("app.storage.bucket", () -> "wagwag-avatars");
+        registry.add("app.storage.endpoint", PostApiIntegrationTest::storageUrl);
+        registry.add("app.storage.public-base-url", () -> storageUrl() + "/wagwag-avatars");
+        registry.add("app.storage.access-key", () -> "testaccess");
+        registry.add("app.storage.secret-key", () -> "testsecret");
+    }
+
+    static String storageUrl() {
+        return "http://" + storage.getHost() + ":" + storage.getMappedPort(8333);
     }
 
     @Autowired MockMvc mvc;
@@ -202,6 +225,87 @@ class PostApiIntegrationTest {
             .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void uploadedImagesPersistInOrderAndAppearInFeed() throws Exception {
+        String firstTicket = imageTicket("image/png");
+        String secondTicket = imageTicket("image/jpeg");
+        byte[] firstBytes = new byte[] {1, 2, 3};
+        byte[] secondBytes = new byte[] {4, 5, 6};
+        assertThat(upload(firstTicket, firstBytes)).isBetween(200, 299);
+        assertThat(upload(secondTicket, secondBytes)).isBetween(200, 299);
+        String firstKey = JsonPath.read(firstTicket, "$.key");
+        String secondKey = JsonPath.read(secondTicket, "$.key");
+        String firstUrl = JsonPath.read(firstTicket, "$.publicUrl");
+        String secondUrl = JsonPath.read(secondTicket, "$.publicUrl");
+
+        long id = createPost("{\"body\":\"Two photos\",\"imageKeys\":[\"" + firstKey + "\",\"" + secondKey + "\"]}");
+        mvc.perform(get("/api/posts/{id}", id))
+            .andExpect(jsonPath("$.imageUrl").value(firstUrl))
+            .andExpect(jsonPath("$.imageUrls[0]").value(firstUrl))
+            .andExpect(jsonPath("$.imageUrls[1]").value(secondUrl));
+        mvc.perform(get("/api/feed"))
+            .andExpect(jsonPath("$.items[0].imageUrls[0]").value(firstUrl))
+            .andExpect(jsonPath("$.items[0].imageUrls[1]").value(secondUrl));
+        assertThat(jdbc.queryForList("SELECT url FROM post_media WHERE post_id = ? ORDER BY sort_order", String.class, id))
+            .containsExactly(firstUrl, secondUrl);
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var served = client.send(HttpRequest.newBuilder(URI.create(secondUrl)).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(served.statusCode()).isEqualTo(200);
+            assertThat(served.body()).isEqualTo(secondBytes);
+        }
+    }
+
+    @Test
+    void publishedPostImageCannotBeReplacedUsingItsUploadTicket() throws Exception {
+        String ticket = imageTicket("image/jpeg");
+        byte[] originalBytes = new byte[] {1, 2, 3, 4};
+        byte[] replacementBytes = new byte[] {9, 8, 7, 6};
+        assertThat(upload(ticket, originalBytes)).isBetween(200, 299);
+
+        String key = JsonPath.read(ticket, "$.key");
+        String publicUrl = JsonPath.read(ticket, "$.publicUrl");
+        long id = createPost("{\"body\":\"Immutable photo\",\"imageKeys\":[\"" + key + "\"]}");
+        mvc.perform(get("/api/posts/{id}", id))
+            .andExpect(jsonPath("$.imageUrl").value(publicUrl))
+            .andExpect(jsonPath("$.imageUrls[0]").value(publicUrl));
+
+        assertThat(upload(ticket, replacementBytes)).isGreaterThanOrEqualTo(300);
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var served = client.send(HttpRequest.newBuilder(URI.create(publicUrl)).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(served.statusCode()).isEqualTo(200);
+            assertThat(served.body()).isEqualTo(originalBytes).isNotEqualTo(replacementBytes);
+        }
+    }
+
+    @Test
+    void invalidPostImagesDoNotCreatePosts() throws Exception {
+        mvc.perform(post("/api/posts/media-uploads").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"contentType\":\"application/pdf\"}"))
+            .andExpect(status().isBadRequest());
+        for (String key : List.of("invalid", "pets/2/posts/" + UUID.randomUUID() + ".png",
+                "pets/1/posts/" + UUID.randomUUID() + ".png")) {
+            mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"imageKeys\":[\"" + key + "\"]}"))
+                .andExpect(status().isBadRequest());
+        }
+        String repeatedKey = "pets/1/posts/" + UUID.randomUUID() + ".png";
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"imageKeys\":[\"" + repeatedKey + "\",\"" + repeatedKey + "\"]}"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"imageKeys\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}"))
+            .andExpect(status().isBadRequest());
+        String ticket = imageTicket("image/png");
+        assertThat(upload(ticket, new byte[5 * 1024 * 1024 + 1])).isBetween(200, 299);
+        String key = JsonPath.read(ticket, "$.key");
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"imageKeys\":[\"" + key + "\"]}"))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts", Long.class)).isZero();
+    }
+
     private long createPost(String body) throws Exception {
         String json = mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
                 .content(body))
@@ -209,6 +313,32 @@ class PostApiIntegrationTest {
             .andReturn().getResponse().getContentAsString();
         Number id = JsonPath.read(json, "$.id");
         return id.longValue();
+    }
+
+    private String imageTicket(String contentType) throws Exception {
+        String ticket = mvc.perform(post("/api/posts/media-uploads").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"contentType\":\"" + contentType + "\"}"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        Map<String, String> headers = JsonPath.read(ticket, "$.headers");
+        assertThat(headers).containsEntry("Content-Type", contentType)
+            .containsEntry("If-None-Match", "*");
+        String uploadUrl = JsonPath.read(ticket, "$.uploadUrl");
+        String signedQuery = URLDecoder.decode(URI.create(uploadUrl).getRawQuery(), StandardCharsets.UTF_8);
+        assertThat(signedQuery).contains("if-none-match");
+        return ticket;
+    }
+
+    private int upload(String ticket, byte[] bytes) throws Exception {
+        String uploadUrl = JsonPath.read(ticket, "$.uploadUrl");
+        Map<String, String> headers = JsonPath.read(ticket, "$.headers");
+        var request = HttpRequest.newBuilder(URI.create(uploadUrl));
+        headers.forEach(request::header);
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var response = client.send(request.PUT(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),
+                HttpResponse.BodyHandlers.discarding());
+            return response.statusCode();
+        }
     }
 
     private String feed(int limit, String cursor) throws Exception {

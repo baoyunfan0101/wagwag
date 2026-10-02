@@ -11,6 +11,7 @@ type Props = {
 };
 
 export function PostCard({ post, onOpen, onLike, likeBusy = false }: Props) {
+  const images = post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
   const content = <>
     <View style={styles.header}>
       {post.petAvatarUrl ? <Image source={{ uri: post.petAvatarUrl }} style={styles.avatar} /> :
@@ -22,7 +23,10 @@ export function PostCard({ post, onOpen, onLike, likeBusy = false }: Props) {
       {onOpen && <Ionicons name="chevron-forward" size={20} color={colors.muted} />}
     </View>
     {post.body && <Text style={styles.body}>{post.body}</Text>}
-    {post.imageUrl && <Image source={{ uri: post.imageUrl }} style={styles.image} resizeMode="cover" />}
+    {images.length === 1 && <Image source={{ uri: images[0] }} style={styles.image} resizeMode="cover" />}
+    {images.length > 1 && <View style={styles.imageGrid}>
+      {images.map((url) => <Image key={url} source={{ uri: url }} style={styles.gridImage} resizeMode="cover" />)}
+    </View>}
   </>;
 
   return <View style={styles.card}>
@@ -57,6 +61,8 @@ const styles = StyleSheet.create({
   date: { color: colors.muted, fontSize: 11, marginTop: 3 },
   body: { color: colors.ink, fontSize: 15, lineHeight: 23, marginTop: 16, marginBottom: 12 },
   image: { width: '100%', height: 260, borderRadius: 15, marginTop: 12, backgroundColor: colors.greenPale },
+  imageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  gridImage: { width: '48%', height: 155, borderRadius: 12, backgroundColor: colors.greenPale },
   actions: { flexDirection: 'row', gap: 26, borderTopColor: colors.line, borderTopWidth: 1, marginTop: 17, paddingTop: 14 },
   action: { flexDirection: 'row', alignItems: 'center', gap: 7, minWidth: 45 },
   actionText: { color: colors.muted, fontSize: 14, fontWeight: '700' },
