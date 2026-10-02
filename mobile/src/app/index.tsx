@@ -43,10 +43,15 @@ export default function ProfileScreen() {
     }>
       <View style={styles.topBar}>
         <View style={styles.brand}><View style={styles.brandMark}><Ionicons name="paw" size={18} color="white" /></View><Text style={styles.brandText}>wagwag</Text></View>
-        <Pressable style={styles.topBadge} onPress={() => router.push('/feed')} accessibilityLabel="Open feed">
-          <Text style={styles.topBadgeText}>FEED</Text>
-          <Ionicons name="arrow-forward" size={14} color={colors.green} />
-        </Pressable>
+        <View style={styles.topActions}>
+          <Pressable style={styles.topBadge} onPress={() => router.push('/social')} accessibilityLabel="Find pet friends">
+            <Text style={styles.topBadgeText}>FRIENDS</Text>
+          </Pressable>
+          <Pressable style={styles.topBadge} onPress={() => router.push('/feed')} accessibilityLabel="Open feed">
+            <Text style={styles.topBadgeText}>FEED</Text>
+            <Ionicons name="arrow-forward" size={14} color={colors.green} />
+          </Pressable>
+        </View>
       </View>
       {loading && !pet ? <View style={styles.center}><ActivityIndicator size="large" color={colors.accent} /><Text style={styles.muted}>Loading your pet...</Text></View> :
         error && !pet ? <View style={styles.center}>
@@ -89,6 +94,7 @@ const styles = StyleSheet.create({
   brand: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   brandMark: { width: 32, height: 32, borderRadius: 11, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   brandText: { fontSize: 23, fontWeight: '900', letterSpacing: -1, color: colors.ink },
+  topActions: { flexDirection: 'row', gap: 7 },
   topBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 11, paddingVertical: 7, borderRadius: 30, backgroundColor: colors.greenPale },
   topBadgeText: { color: colors.green, fontWeight: '800', fontSize: 10, letterSpacing: 1.2 },
   center: { minHeight: 400, alignItems: 'center', justifyContent: 'center', gap: 16 },

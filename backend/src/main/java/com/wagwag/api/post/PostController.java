@@ -39,8 +39,9 @@ public class PostController {
 
     @GetMapping("/feed")
     public FeedPage feed(@RequestParam(defaultValue = "20") int limit,
-                         @RequestParam(required = false) String cursor) {
-        return service.feed(limit, cursor);
+                         @RequestParam(required = false) String cursor,
+                         @RequestParam(defaultValue = "false") boolean following) {
+        return service.feed(limit, cursor, following);
     }
 
     @PostMapping("/posts/{id}/likes")
