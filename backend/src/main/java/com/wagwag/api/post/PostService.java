@@ -4,7 +4,6 @@ import com.wagwag.api.pet.Pet;
 import com.wagwag.api.pet.PetRepository;
 import com.wagwag.api.storage.PostImageStorage;
 import com.wagwag.api.storage.PostImageStorage.UploadTicket;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
@@ -46,14 +45,9 @@ public class PostService {
     @Transactional
     public PostResponse create(PostInput input) {
         String body = trimNullable(input.body());
-        String imageUrl = trimNullable(input.imageUrl());
         List<String> keys = input.imageKeys() == null ? List.of() : input.imageKeys();
-        if (body == null && imageUrl == null && keys.isEmpty()) {
+        if (body == null && keys.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add text or an image");
-        }
-        if (imageUrl != null) validateImageUrl(imageUrl);
-        if (imageUrl != null && !keys.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use image links or uploaded images");
         }
         if (keys.size() > 4 || keys.stream().anyMatch(key -> key == null || key.isBlank())
                 || new HashSet<>(keys).size() != keys.size()) {
@@ -62,7 +56,6 @@ public class PostService {
 
         Pet pet = actor();
         List<String> urls = new ArrayList<>();
-        if (imageUrl != null) urls.add(imageUrl);
         for (String key : keys) urls.add(storage.verifyAndGetUrl(pet.getId(), key));
 
         Post post = posts.saveAndFlush(new Post(pet, body));
@@ -115,7 +108,7 @@ public class PostService {
             Long id = post.getId();
             List<String> urls = imageUrls.getOrDefault(id, List.of());
             return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
-                post.getBody(), firstUrl(urls), urls, post.getCreatedAt(),
+                post.getBody(), urls, post.getCreatedAt(),
                 likeCounts.getOrDefault(id, 0L), commentCounts.getOrDefault(id, 0L), likedIds.contains(id));
         }).toList();
         Post last = selected.getLast();
@@ -158,13 +151,9 @@ public class PostService {
         List<String> urls = media.findByPost_IdOrderBySortOrderAsc(id).stream()
             .map(PostMedia::getUrl).toList();
         return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
-            post.getBody(), firstUrl(urls), urls, post.getCreatedAt(), likes.countByPost_Id(id),
+            post.getBody(), urls, post.getCreatedAt(), likes.countByPost_Id(id),
             comments.countByPost_Id(id),
             devPetId > 0 && likes.existsByPost_IdAndPet_Id(id, devPetId));
-    }
-
-    private static String firstUrl(List<String> urls) {
-        return urls.isEmpty() ? null : urls.getFirst();
     }
 
     private static Map<Long, Long> counts(List<Object[]> rows) {
@@ -213,17 +202,5 @@ public class PostService {
 
     private static String trimNullable(String value) {
         return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    private static void validateImageUrl(String value) {
-        try {
-            URI uri = URI.create(value);
-            if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
-                    || uri.getHost() == null || uri.getUserInfo() != null) {
-                throw new IllegalArgumentException();
-            }
-        } catch (IllegalArgumentException error) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use a valid HTTP image link", error);
-        }
     }
 }

@@ -11,17 +11,12 @@ import { colors } from '@/lib/theme';
 export default function ComposeScreen() {
   const router = useRouter();
   const [body, setBody] = useState('');
-  const [imageUrl, setImageUrl] = useState('');
   const [selectedUris, setSelectedUris] = useState<string[]>([]);
   const uploadedKeys = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function chooseImages() {
-    if (imageUrl.trim()) {
-      setError('Remove the image link before choosing photos.');
-      return;
-    }
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'], allowsMultipleSelection: true,
@@ -45,17 +40,8 @@ export default function ComposeScreen() {
   async function publish() {
     if (saving) return;
     const text = body.trim();
-    const image = imageUrl.trim();
-    if (!text && !image && selectedUris.length === 0) {
+    if (!text && selectedUris.length === 0) {
       setError('Add a story or a photo.');
-      return;
-    }
-    if (image && selectedUris.length > 0) {
-      setError('Use photos or an image link, not both.');
-      return;
-    }
-    if (image && !/^https?:\/\/[^\s]+$/i.test(image)) {
-      setError('Use a valid HTTP or HTTPS image link.');
       return;
     }
     setSaving(true);
@@ -67,7 +53,7 @@ export default function ComposeScreen() {
         uploadedKeys.current[uri] = key;
         imageKeys.push(key);
       }
-      const post = await createPost({ body: text || null, imageUrl: image || null, imageKeys });
+      const post = await createPost({ body: text || null, imageKeys });
       router.replace({ pathname: '/post/[id]', params: { id: String(post.id) } });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not publish the post.');
@@ -106,14 +92,6 @@ export default function ComposeScreen() {
               <Ionicons name="close" size={17} color="white" />
             </Pressable>
           </View>)}</View>}
-        <Text style={styles.label}>Image link (optional)</Text>
-        <TextInput style={styles.link} value={imageUrl} onChangeText={setImageUrl}
-          placeholder="https://example.com/photo.jpg" placeholderTextColor="#9BA59D"
-          autoCapitalize="none" autoCorrect={false} keyboardType="url" maxLength={2048}
-          editable={selectedUris.length === 0 && !saving} />
-        <Text style={styles.hint}>Or paste a public image link when no photos are selected.</Text>
-        {/^https?:\/\/[^\s]+$/i.test(imageUrl.trim()) &&
-          <Image source={{ uri: imageUrl.trim() }} style={styles.preview} resizeMode="cover" />}
         {error && <Text style={styles.error}>{error}</Text>}
         <Pressable style={[styles.publish, saving && styles.disabled]} onPress={() => void publish()} disabled={saving}>
           {saving ? <ActivityIndicator color="white" /> : <>
@@ -144,9 +122,6 @@ const styles = StyleSheet.create({
   photoWrap: { width: '48%', height: 150 },
   photo: { width: '100%', height: '100%', borderRadius: 14 },
   removePhoto: { position: 'absolute', top: 7, right: 7, width: 28, height: 28, borderRadius: 14, backgroundColor: '#0009', alignItems: 'center', justifyContent: 'center' },
-  link: { minHeight: 54, backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 16, color: colors.ink, fontSize: 14 },
-  hint: { color: colors.muted, fontSize: 12, marginTop: 8 },
-  preview: { width: '100%', height: 230, borderRadius: 18, marginTop: 18, backgroundColor: colors.greenPale },
   error: { color: '#B23725', lineHeight: 20, marginTop: 18 },
   publish: { minHeight: 56, backgroundColor: colors.accent, borderRadius: 16, flexDirection: 'row', gap: 9, alignItems: 'center', justifyContent: 'center', marginTop: 27 },
   disabled: { opacity: 0.65 },

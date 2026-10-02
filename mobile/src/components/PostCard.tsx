@@ -12,7 +12,7 @@ type Props = {
 };
 
 export function PostCard({ post, onOpen, onPet, onLike, likeBusy = false }: Props) {
-  const images = post.imageUrls.length > 0 ? post.imageUrls : post.imageUrl ? [post.imageUrl] : [];
+  const images = post.imageUrls;
   const content = <>
     <View style={styles.header}>
       {post.petAvatarUrl ? <Image source={{ uri: post.petAvatarUrl }} style={styles.avatar} /> :

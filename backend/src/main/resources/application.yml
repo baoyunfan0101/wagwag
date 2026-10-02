@@ -5,6 +5,11 @@ spring:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/wagwag}
     username: ${DATABASE_USER:wagwag}
     password: ${DATABASE_PASSWORD:wagwag}
+  flyway:
+    locations: classpath:db/migration
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
   jpa:
     hibernate:
       ddl-auto: validate

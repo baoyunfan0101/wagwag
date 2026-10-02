@@ -34,10 +34,9 @@ export type FollowStatus = {
   followedByMe: boolean;
 };
 
-export type PostInput = { body: string | null; imageUrl: string | null; imageKeys?: string[] };
+export type PostInput = { body: string | null; imageKeys: string[] };
 export type Post = {
   body: string | null;
-  imageUrl: string | null;
   imageUrls: string[];
   id: number;
   petId: number;

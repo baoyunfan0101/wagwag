@@ -77,28 +77,23 @@ class PostApiIntegrationTest {
 
     @Test
     void postsPersistAndFeedIsNewestFirst() throws Exception {
-        long textId = createPost("{\"body\":\" A new walk today \"}");
-        String imageUrl = "https://images.example.test/mochi.jpg";
-        long imageId = createPost("{\"imageUrl\":\"" + imageUrl + "\"}");
+        long firstId = createPost("{\"body\":\" A new walk today \"}");
+        long secondId = createPost("{\"body\":\" Another walk \"}");
 
-        mvc.perform(get("/api/posts/{id}", textId))
+        mvc.perform(get("/api/posts/{id}", firstId))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.body").value("A new walk today"))
-            .andExpect(jsonPath("$.petName").value("Mochi"));
-        mvc.perform(get("/api/posts/{id}", imageId))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.imageUrl").value(imageUrl));
+            .andExpect(jsonPath("$.petName").value("Mochi"))
+            .andExpect(jsonPath("$.imageUrls.length()").value(0))
+            .andExpect(jsonPath("$.imageUrl").doesNotExist());
         mvc.perform(get("/api/feed"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.items[0].id").value(imageId))
-            .andExpect(jsonPath("$.items[0].imageUrl").value(imageUrl))
-            .andExpect(jsonPath("$.items[1].id").value(textId))
+            .andExpect(jsonPath("$.items[0].id").value(secondId))
+            .andExpect(jsonPath("$.items[1].id").value(firstId))
             .andExpect(jsonPath("$.nextCursor").value((Object) null));
 
-        assertThat(jdbc.queryForObject("SELECT body FROM posts WHERE id = ?", String.class, textId))
+        assertThat(jdbc.queryForObject("SELECT body FROM posts WHERE id = ?", String.class, firstId))
             .isEqualTo("A new walk today");
-        assertThat(jdbc.queryForObject("SELECT url FROM post_media WHERE post_id = ?", String.class, imageId))
-            .isEqualTo(imageUrl);
     }
 
     @Test
@@ -214,7 +209,10 @@ class PostApiIntegrationTest {
                 .content("{\"body\":\"  \"}"))
             .andExpect(status().isBadRequest());
         mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"imageUrl\":\"javascript:alert(1)\"}"))
+                .content("{\"imageUrl\":\"https://example.com/old-client.jpg\"}"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"body\":\"Old client\",\"imageUrl\":\"https://example.com/old-client.jpg\"}"))
             .andExpect(status().isBadRequest());
         mvc.perform(post("/api/posts/999999/comments").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"body\":\"Hello\"}"))
@@ -240,7 +238,7 @@ class PostApiIntegrationTest {
 
         long id = createPost("{\"body\":\"Two photos\",\"imageKeys\":[\"" + firstKey + "\",\"" + secondKey + "\"]}");
         mvc.perform(get("/api/posts/{id}", id))
-            .andExpect(jsonPath("$.imageUrl").value(firstUrl))
+            .andExpect(jsonPath("$.imageUrl").doesNotExist())
             .andExpect(jsonPath("$.imageUrls[0]").value(firstUrl))
             .andExpect(jsonPath("$.imageUrls[1]").value(secondUrl));
         mvc.perform(get("/api/feed"))
@@ -267,7 +265,7 @@ class PostApiIntegrationTest {
         String publicUrl = JsonPath.read(ticket, "$.publicUrl");
         long id = createPost("{\"body\":\"Immutable photo\",\"imageKeys\":[\"" + key + "\"]}");
         mvc.perform(get("/api/posts/{id}", id))
-            .andExpect(jsonPath("$.imageUrl").value(publicUrl))
+            .andExpect(jsonPath("$.imageUrl").doesNotExist())
             .andExpect(jsonPath("$.imageUrls[0]").value(publicUrl));
 
         assertThat(upload(ticket, replacementBytes)).isGreaterThanOrEqualTo(300);
