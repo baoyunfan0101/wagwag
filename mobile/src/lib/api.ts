@@ -93,17 +93,17 @@ export async function uploadPostImage(uri: string): Promise<string> {
   if (image.size === 0 || image.size > 5 * 1024 * 1024) {
     throw new Error('Choose an image smaller than 5 MB.');
   }
-  const ticket = await request<{ key: string; uploadUrl: string }>(
+  const ticket = await request<{ key: string; uploadUrl: string; headers: Record<string, string> }>(
     '/api/posts/media-uploads',
     { method: 'POST', body: JSON.stringify({ contentType: 'image/jpeg' }) },
   );
   try {
     const uploaded = await expoFetch(ticket.uploadUrl, {
       method: 'PUT',
-      headers: { 'Content-Type': 'image/jpeg' },
+      headers: ticket.headers,
       body: image,
     });
-    if (!uploaded.ok) throw new Error('Image upload failed. Check object storage and try again.');
+    if (!uploaded.ok) throw new Error('Image upload failed. Please try again.');
   } catch (cause) {
     if (cause instanceof Error && cause.message.startsWith('Image upload failed')) throw cause;
     throw new Error('Cannot reach object storage. Check its network address and CORS settings.');

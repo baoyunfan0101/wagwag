@@ -9,9 +9,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
 import java.util.UUID;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -228,8 +231,8 @@ class PostApiIntegrationTest {
         String secondTicket = imageTicket("image/jpeg");
         byte[] firstBytes = new byte[] {1, 2, 3};
         byte[] secondBytes = new byte[] {4, 5, 6};
-        upload(firstTicket, "image/png", firstBytes);
-        upload(secondTicket, "image/jpeg", secondBytes);
+        assertThat(upload(firstTicket, firstBytes)).isBetween(200, 299);
+        assertThat(upload(secondTicket, secondBytes)).isBetween(200, 299);
         String firstKey = JsonPath.read(firstTicket, "$.key");
         String secondKey = JsonPath.read(secondTicket, "$.key");
         String firstUrl = JsonPath.read(firstTicket, "$.publicUrl");
@@ -254,6 +257,29 @@ class PostApiIntegrationTest {
     }
 
     @Test
+    void publishedPostImageCannotBeReplacedUsingItsUploadTicket() throws Exception {
+        String ticket = imageTicket("image/jpeg");
+        byte[] originalBytes = new byte[] {1, 2, 3, 4};
+        byte[] replacementBytes = new byte[] {9, 8, 7, 6};
+        assertThat(upload(ticket, originalBytes)).isBetween(200, 299);
+
+        String key = JsonPath.read(ticket, "$.key");
+        String publicUrl = JsonPath.read(ticket, "$.publicUrl");
+        long id = createPost("{\"body\":\"Immutable photo\",\"imageKeys\":[\"" + key + "\"]}");
+        mvc.perform(get("/api/posts/{id}", id))
+            .andExpect(jsonPath("$.imageUrl").value(publicUrl))
+            .andExpect(jsonPath("$.imageUrls[0]").value(publicUrl));
+
+        assertThat(upload(ticket, replacementBytes)).isGreaterThanOrEqualTo(300);
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var served = client.send(HttpRequest.newBuilder(URI.create(publicUrl)).GET().build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(served.statusCode()).isEqualTo(200);
+            assertThat(served.body()).isEqualTo(originalBytes).isNotEqualTo(replacementBytes);
+        }
+    }
+
+    @Test
     void invalidPostImagesDoNotCreatePosts() throws Exception {
         mvc.perform(post("/api/posts/media-uploads").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"contentType\":\"application/pdf\"}"))
@@ -272,7 +298,7 @@ class PostApiIntegrationTest {
                 .content("{\"imageKeys\":[\"a\",\"b\",\"c\",\"d\",\"e\"]}"))
             .andExpect(status().isBadRequest());
         String ticket = imageTicket("image/png");
-        upload(ticket, "image/png", new byte[5 * 1024 * 1024 + 1]);
+        assertThat(upload(ticket, new byte[5 * 1024 * 1024 + 1])).isBetween(200, 299);
         String key = JsonPath.read(ticket, "$.key");
         mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"imageKeys\":[\"" + key + "\"]}"))
@@ -290,20 +316,28 @@ class PostApiIntegrationTest {
     }
 
     private String imageTicket(String contentType) throws Exception {
-        return mvc.perform(post("/api/posts/media-uploads").contentType(MediaType.APPLICATION_JSON)
+        String ticket = mvc.perform(post("/api/posts/media-uploads").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"contentType\":\"" + contentType + "\"}"))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString();
+        Map<String, String> headers = JsonPath.read(ticket, "$.headers");
+        assertThat(headers).containsEntry("Content-Type", contentType)
+            .containsEntry("If-None-Match", "*");
+        String uploadUrl = JsonPath.read(ticket, "$.uploadUrl");
+        String signedQuery = URLDecoder.decode(URI.create(uploadUrl).getRawQuery(), StandardCharsets.UTF_8);
+        assertThat(signedQuery).contains("if-none-match");
+        return ticket;
     }
 
-    private void upload(String ticket, String contentType, byte[] bytes) throws Exception {
+    private int upload(String ticket, byte[] bytes) throws Exception {
         String uploadUrl = JsonPath.read(ticket, "$.uploadUrl");
+        Map<String, String> headers = JsonPath.read(ticket, "$.headers");
+        var request = HttpRequest.newBuilder(URI.create(uploadUrl));
+        headers.forEach(request::header);
         try (HttpClient client = HttpClient.newHttpClient()) {
-            var response = client.send(HttpRequest.newBuilder(URI.create(uploadUrl))
-                .header("Content-Type", contentType)
-                .PUT(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),
+            var response = client.send(request.PUT(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),
                 HttpResponse.BodyHandlers.discarding());
-            assertThat(response.statusCode()).isEqualTo(200);
+            return response.statusCode();
         }
     }
 

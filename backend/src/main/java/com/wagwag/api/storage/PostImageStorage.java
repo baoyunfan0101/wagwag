@@ -2,6 +2,7 @@ package com.wagwag.api.storage;
 
 import java.net.URI;
 import java.time.Duration;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -58,12 +59,13 @@ public class PostImageStorage {
         };
         String key = "pets/" + petId + "/posts/" + UUID.randomUUID() + "." + suffix;
         PutObjectRequest put = PutObjectRequest.builder()
-            .bucket(bucket).key(key).contentType(contentType).build();
+            .bucket(bucket).key(key).contentType(contentType).ifNoneMatch("*").build();
         try (S3Presigner presigner = presigner()) {
             String uploadUrl = presigner.presignPutObject(PutObjectPresignRequest.builder()
                 .signatureDuration(Duration.ofMinutes(10)).putObjectRequest(put).build())
                 .url().toString();
-            return new UploadTicket(key, uploadUrl, publicUrl(key));
+            return new UploadTicket(key, uploadUrl, publicUrl(key),
+                Map.of("Content-Type", contentType, "If-None-Match", "*"));
         } catch (SdkClientException error) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Object storage credentials are unavailable", error);
         }
@@ -124,5 +126,6 @@ public class PostImageStorage {
         return builder.build();
     }
 
-    public record UploadTicket(String key, String uploadUrl, String publicUrl) {}
+    public record UploadTicket(String key, String uploadUrl, String publicUrl,
+                               Map<String, String> headers) {}
 }
