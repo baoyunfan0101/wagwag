@@ -1,35 +1,86 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PostCard } from '@/components/PostCard';
 import { getFeed, likePost, unlikePost, type Post } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
+const PAGE_SIZE = 20;
+
 export default function FeedScreen() {
   const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [busyLikeId, setBusyLikeId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const generation = useRef(0);
+  const firstPageInFlight = useRef(false);
+  const nextPageInFlight = useRef(false);
+  const lastLoadedCursor = useRef<string | null>(null);
 
-  const load = useCallback(async (refresh = false) => {
+  const loadFirstPage = useCallback(async (refresh = false) => {
+    if (firstPageInFlight.current) return;
+    firstPageInFlight.current = true;
+    const requestGeneration = ++generation.current;
+    lastLoadedCursor.current = null;
+    setNextCursor(null);
+    setLoadMoreError(null);
     if (refresh) setRefreshing(true);
     else setLoading(true);
     try {
-      setPosts(await getFeed());
+      const page = await getFeed(PAGE_SIZE);
+      if (requestGeneration !== generation.current) return;
+      setPosts(page.items);
+      setNextCursor(page.nextCursor);
       setError(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not load the feed.');
+      if (requestGeneration === generation.current) {
+        setError(cause instanceof Error ? cause.message : 'Could not load the feed.');
+      }
     } finally {
+      firstPageInFlight.current = false;
       setLoading(false);
       setRefreshing(false);
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(useCallback(() => { void loadFirstPage(); }, [loadFirstPage]));
+
+  async function loadNextPage(retry = false) {
+    if (!nextCursor || nextCursor === lastLoadedCursor.current || firstPageInFlight.current
+        || nextPageInFlight.current || (loadMoreError && !retry)) return;
+    nextPageInFlight.current = true;
+    const requestGeneration = generation.current;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    try {
+      const page = await getFeed(PAGE_SIZE, nextCursor);
+      if (requestGeneration !== generation.current) return;
+      lastLoadedCursor.current = nextCursor;
+      setPosts((current) => {
+        const existing = new Set(current.map((post) => post.id));
+        return [...current, ...page.items.filter((post) => {
+          if (existing.has(post.id)) return false;
+          existing.add(post.id);
+          return true;
+        })];
+      });
+      setNextCursor(page.nextCursor);
+    } catch (cause) {
+      if (requestGeneration === generation.current) {
+        setLoadMoreError(cause instanceof Error ? cause.message : 'Could not load more posts.');
+      }
+    } finally {
+      nextPageInFlight.current = false;
+      setLoadingMore(false);
+    }
+  }
 
   async function toggleLike(post: Post) {
     if (busyLikeId !== null) return;
@@ -46,36 +97,52 @@ export default function FeedScreen() {
   }
 
   return <SafeAreaView style={styles.safe}>
-    <ScrollView contentContainerStyle={styles.content} refreshControl={
-      <RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.accent} />
-    }>
-      <View style={styles.header}>
-        <Pressable style={styles.back} onPress={() => router.back()} accessibilityLabel="Back to profile">
-          <Ionicons name="arrow-back" size={22} color={colors.ink} />
-        </Pressable>
-        <Text style={styles.title}>The Feed</Text>
-        <Pressable style={styles.compose} onPress={() => router.push('/compose')} accessibilityLabel="Create post">
-          <Ionicons name="add" size={25} color="white" />
-        </Pressable>
-      </View>
-      <Text style={styles.intro}>A little corner for every pet's story.</Text>
-      {error && <View style={styles.errorBox}>
-        <Text style={styles.error}>{error}</Text>
-        <Pressable onPress={() => void load()}><Text style={styles.retry}>Try again</Text></Pressable>
-      </View>}
-      {loading && posts.length === 0 ? <View style={styles.center}>
+    <FlatList
+      data={posts}
+      keyExtractor={(post) => String(post.id)}
+      contentContainerStyle={styles.content}
+      refreshing={refreshing}
+      onRefresh={() => void loadFirstPage(true)}
+      onEndReached={() => void loadNextPage()}
+      onEndReachedThreshold={0.5}
+      renderItem={({ item }) => <PostCard post={item}
+        onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
+        onLike={() => void toggleLike(item)} likeBusy={busyLikeId === item.id} />}
+      ListHeaderComponent={<>
+        <View style={styles.header}>
+          <Pressable style={styles.back} onPress={() => router.back()} accessibilityLabel="Back to profile">
+            <Ionicons name="arrow-back" size={22} color={colors.ink} />
+          </Pressable>
+          <Text style={styles.title}>The Feed</Text>
+          <Pressable style={styles.compose} onPress={() => router.push('/compose')} accessibilityLabel="Create post">
+            <Ionicons name="add" size={25} color="white" />
+          </Pressable>
+        </View>
+        <Text style={styles.intro}>A little corner for every pet's story.</Text>
+        {error && <View style={styles.errorBox}>
+          <Text style={styles.error}>{error}</Text>
+          <Pressable onPress={() => void loadFirstPage()}><Text style={styles.retry}>Try again</Text></Pressable>
+        </View>}
+      </>}
+      ListEmptyComponent={loading ? <View style={styles.center}>
         <ActivityIndicator size="large" color={colors.accent} />
-      </View> : posts.length === 0 ? <View style={styles.empty}>
+      </View> : !error ? <View style={styles.empty}>
         <Ionicons name="paw-outline" size={46} color={colors.accent} />
         <Text style={styles.emptyTitle}>No posts yet</Text>
         <Text style={styles.emptyText}>Share the first WagWag moment.</Text>
         <Pressable style={styles.button} onPress={() => router.push('/compose')}>
           <Text style={styles.buttonText}>Create a post</Text>
         </Pressable>
-      </View> : posts.map((post) => <PostCard key={post.id} post={post}
-        onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(post.id) } })}
-        onLike={() => void toggleLike(post)} likeBusy={busyLikeId === post.id} />)}
-    </ScrollView>
+      </View> : null}
+      ListFooterComponent={posts.length > 0 ? <View style={styles.footer}>
+        {loadingMore ? <ActivityIndicator color={colors.accent} />
+          : loadMoreError ? <View style={styles.errorBox}>
+            <Text style={styles.error}>{loadMoreError}</Text>
+            <Pressable onPress={() => void loadNextPage(true)}><Text style={styles.retry}>Try again</Text></Pressable>
+          </View>
+          : !nextCursor && !loading && !refreshing ? <Text style={styles.end}>You're all caught up.</Text> : null}
+      </View> : null}
+    />
   </SafeAreaView>;
 }
 
@@ -96,4 +163,6 @@ const styles = StyleSheet.create({
   errorBox: { backgroundColor: colors.accentPale, borderRadius: 13, padding: 14, marginBottom: 16 },
   error: { color: '#B23725', lineHeight: 20 },
   retry: { color: colors.accent, fontWeight: '800', marginTop: 8 },
+  footer: { minHeight: 50, justifyContent: 'center' },
+  end: { color: colors.muted, textAlign: 'center' },
 });

@@ -31,6 +31,7 @@ export type Post = PostInput & {
   commentCount: number;
   likedByMe: boolean;
 };
+export type FeedPage = { items: Post[]; nextCursor: string | null };
 export type Comment = {
   id: number;
   postId: number;
@@ -69,8 +70,9 @@ export function savePet(id: number, input: PetInput): Promise<Pet> {
   return request<Pet>(`/api/pets/${id}`, { method: 'PUT', body: JSON.stringify(input) });
 }
 
-export function getFeed(): Promise<Post[]> {
-  return request<Post[]>('/api/feed');
+export function getFeed(limit = 20, cursor?: string): Promise<FeedPage> {
+  const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+  return request<FeedPage>(`/api/feed?${query}`);
 }
 
 export function getPost(id: number): Promise<Post> {
