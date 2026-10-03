@@ -1,13 +1,15 @@
 import { StyleSheet, Text, View } from 'react-native';
-import type { WalkPoint, WalkRoute } from '@/lib/api';
+import type { TerritoryArea, WalkPoint, WalkRoute } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
-export type WalkMapProps = { points: WalkPoint[]; route?: WalkRoute; followLatest?: boolean };
+export type WalkMapProps = { points: WalkPoint[]; route?: WalkRoute; territory?: TerritoryArea;
+  followLatest?: boolean };
 
-export default function WalkMap({ points }: WalkMapProps) {
+export default function WalkMap({ points, territory }: WalkMapProps) {
   return <View style={styles.fallback}>
     <Text style={styles.title}>Map preview requires an iOS or Android development build.</Text>
     <Text style={styles.detail}>{points.length} GPS points recorded</Text>
+    {territory && <Text style={styles.detail}>Territory claimed for this walk</Text>}
   </View>;
 }
 

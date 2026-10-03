@@ -82,6 +82,9 @@ export type WalkPage = { items: WalkSummary[]; nextPage: number | null };
 export type NearbyWalk = { walk: WalkSummary; proximityMeters: number };
 export type NearbyWalkPage = { items: NearbyWalk[]; nextPage: number | null };
 export type WalkInput = { clientWalkId: string; startedAt: string; endedAt: string; points: WalkPoint[] };
+export type TerritoryArea = { type: 'Polygon'; coordinates: [number, number][][] };
+export type Territory = { id: number; walkId: number; petId: number; createdAt: string;
+  areaSquareMeters: number; area: TerritoryArea };
 export type Comment = {
   id: number;
   postId: number;
@@ -95,6 +98,10 @@ export type Comment = {
 export const DEV_PET_ID = Number(process.env.EXPO_PUBLIC_DEV_PET_ID || '1');
 const baseUrl = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8080').replace(/\/$/, '');
 
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -107,7 +114,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const problem = await response.json().catch(() => ({}));
-    throw new Error(problem.detail || problem.message || `Request failed (${response.status})`);
+    throw new ApiError(problem.detail || problem.message || `Request failed (${response.status})`, response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -241,6 +248,14 @@ export function createWalk(input: WalkInput): Promise<Walk> {
 
 export function getWalk(id: number): Promise<Walk> {
   return request<Walk>(`/api/walks/${id}`);
+}
+
+export function getWalkTerritory(walkId: number): Promise<Territory> {
+  return request<Territory>(`/api/walks/${walkId}/territory`);
+}
+
+export function claimWalkTerritory(walkId: number): Promise<Territory> {
+  return request<Territory>(`/api/walks/${walkId}/territory`, { method: 'POST' });
 }
 
 export function getWalks(limit = 20, page = 0): Promise<WalkPage> {

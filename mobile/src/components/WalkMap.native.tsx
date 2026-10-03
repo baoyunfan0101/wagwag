@@ -1,4 +1,4 @@
-import Mapbox, { Camera, CircleLayer, LineLayer, MapView, ShapeSource } from '@rnmapbox/maps';
+import Mapbox, { Camera, CircleLayer, FillLayer, LineLayer, MapView, ShapeSource } from '@rnmapbox/maps';
 import { StyleSheet, Text, View } from 'react-native';
 import type { WalkMapProps } from './WalkMap';
 import { colors } from '@/lib/theme';
@@ -6,7 +6,7 @@ import { colors } from '@/lib/theme';
 const token = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 if (token && token.startsWith('pk.')) void Mapbox.setAccessToken(token);
 
-export default function WalkMap({ points, route, followLatest = false }: WalkMapProps) {
+export default function WalkMap({ points, route, territory, followLatest = false }: WalkMapProps) {
   if (!token || !token.startsWith('pk.')) {
     return <View style={styles.fallback}>
       <Text style={styles.message}>Set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN to show the route map.</Text>
@@ -15,9 +15,10 @@ export default function WalkMap({ points, route, followLatest = false }: WalkMap
 
   const coordinates: [number, number][] = route?.coordinates ?? points.map((point) => [point.longitude, point.latitude]);
   const latest: [number, number] = coordinates.at(-1) ?? [-95.3698, 29.7604];
-  const longitudes = coordinates.map((point) => point[0]);
-  const latitudes = coordinates.map((point) => point[1]);
-  const hasBounds = !followLatest && coordinates.length > 1 &&
+  const visibleCoordinates = [...coordinates, ...(territory?.coordinates.flat() ?? [])];
+  const longitudes = visibleCoordinates.map((point) => point[0]);
+  const latitudes = visibleCoordinates.map((point) => point[1]);
+  const hasBounds = !followLatest && visibleCoordinates.length > 1 &&
     (Math.max(...longitudes) !== Math.min(...longitudes) || Math.max(...latitudes) !== Math.min(...latitudes));
   const bounds = hasBounds ? {
     ne: [Math.max(...longitudes), Math.max(...latitudes)] as [number, number],
@@ -27,7 +28,12 @@ export default function WalkMap({ points, route, followLatest = false }: WalkMap
   return <View style={styles.frame}>
     <MapView style={styles.map} styleURL="mapbox://styles/mapbox/outdoors-v12">
       <Camera centerCoordinate={bounds ? undefined : latest} bounds={bounds}
+        padding={bounds ? { paddingTop: 24, paddingBottom: 24, paddingLeft: 24, paddingRight: 24 } : undefined}
         zoomLevel={bounds ? undefined : 14} animationDuration={followLatest ? 500 : 0} />
+      {territory && <ShapeSource id="walk-territory" shape={territory}>
+        <FillLayer id="walk-territory-fill" style={{ fillColor: colors.green, fillOpacity: 0.25 }} />
+        <LineLayer id="walk-territory-border" style={{ lineColor: colors.green, lineWidth: 2 }} />
+      </ShapeSource>}
       {coordinates.length > 1 && <ShapeSource id="walk-route" shape={{ type: 'LineString', coordinates }}>
         <LineLayer id="walk-route-line" style={{ lineColor: colors.accent, lineWidth: 5, lineCap: 'round' }} />
       </ShapeSource>}

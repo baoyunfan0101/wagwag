@@ -110,6 +110,10 @@ class WalkApiIntegrationTest {
         mvc.perform(get("/api/walks/{id}", walkId(response)))
             .andExpect(jsonPath("$.distanceMeters").value(0.0))
             .andExpect(jsonPath("$.points.length()").value(1));
+        mvc.perform(post("/api/walks/{id}/territory", walkId(response)))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.areaSquareMeters")
+                .value(org.hamcrest.Matchers.greaterThan(1000.0)));
         assertThat(submit(body).getStatus()).isEqualTo(200);
     }
 
@@ -153,6 +157,53 @@ class WalkApiIntegrationTest {
             .content("{\"clientWalkId\":\"not-a-uuid\"}"))
             .andExpect(status().isBadRequest());
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walks", Long.class)).isZero();
+    }
+
+    @Test
+    void impossibleSpeedCannotCreateWalkOrTerritory() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(40.7128, -74.0060, "2026-01-01T10:01:00Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walks", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walk_points", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM territories", Long.class)).isZero();
+    }
+
+    @Test
+    void equalPointTimestampsAreRejectedEvenForStationaryPoints() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7610, -95.3680, "2026-01-01T10:00:00Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest());
+        String stationary = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(stationary))
+            .andExpect(status().isBadRequest());
+        String sameStoredMicrosecond = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00.000000100Z"),
+            point(29.7604, -95.3698, "2026-01-01T10:00:00.000000900Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(sameStoredMicrosecond))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walks", Long.class)).isZero();
+    }
+
+    @Test
+    void plausibleFastWalkAndStationarySegmentCanCreateTerritory() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:00:20Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7609, -95.3698, "2026-01-01T10:00:10Z"),
+            point(29.7609, -95.3698, "2026-01-01T10:00:20Z"));
+        MockHttpServletResponse created = submit(body);
+        assertThat(created.getStatus()).isEqualTo(201);
+        long id = walkId(created);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walk_points WHERE walk_id = ?", Long.class, id))
+            .isEqualTo(3);
+        mvc.perform(post("/api/walks/{id}/territory", id)).andExpect(status().isCreated());
+        assertThat(submit(body).getStatus()).isEqualTo(200);
     }
 
     @Test
@@ -243,6 +294,77 @@ class WalkApiIntegrationTest {
         mvc.perform(get("/api/walks").param("page", "-1")).andExpect(status().isBadRequest());
     }
 
+    @Test
+    void savedWalkCreatesOnePersistentTerritoryWithPolygonGeometry() throws Exception {
+        long walkId = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        mvc.perform(get("/api/walks/{id}/territory", walkId)).andExpect(status().isNotFound());
+
+        MockHttpServletResponse created = mvc.perform(post("/api/walks/{id}/territory", walkId))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.walkId").value(walkId))
+            .andExpect(jsonPath("$.petId").value(1))
+            .andExpect(jsonPath("$.area.type").value("Polygon"))
+            .andExpect(jsonPath("$.area.coordinates[0].length()")
+                .value(org.hamcrest.Matchers.greaterThan(3)))
+            .andExpect(jsonPath("$.areaSquareMeters")
+                .value(org.hamcrest.Matchers.greaterThan(1000.0)))
+            .andReturn().getResponse();
+        long territoryId = ((Number) JsonPath.read(created.getContentAsString(), "$.id")).longValue();
+        assertThat(jdbc.queryForObject("SELECT GeometryType(area) FROM territories WHERE id = ?",
+            String.class, territoryId)).isEqualTo("POLYGON");
+        assertThat(jdbc.queryForObject("SELECT ST_SRID(area) FROM territories WHERE id = ?",
+            Integer.class, territoryId)).isEqualTo(4326);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'territories_area_idx' "
+            + "AND indexdef LIKE '%gist%'", Long.class)).isEqualTo(1);
+
+        mvc.perform(get("/api/walks/{id}/territory", walkId))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(territoryId));
+        mvc.perform(post("/api/walks/{id}/territory", walkId))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(territoryId));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM territories", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    void territoryClaimRequiresAnOwnedWalk() throws Exception {
+        long other = jdbc.queryForObject("INSERT INTO walks (pet_id, client_walk_id, started_at, ended_at, route) "
+            + "VALUES (1000, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+            + "ST_GeomFromText('LINESTRING(-95 29,-95.001 29)', 4326)) RETURNING id",
+            Long.class, UUID.randomUUID());
+        mvc.perform(post("/api/walks/{id}/territory", other)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/walks/{id}/territory", other)).andExpect(status().isNotFound());
+        mvc.perform(post("/api/walks/{id}/territory", Long.MAX_VALUE)).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM territories", Long.class)).isZero();
+    }
+
+    @Test
+    void concurrentClaimsCannotCreateTwoTerritoriesForTheSameWalk() throws Exception {
+        long walkId = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Callable<MockHttpServletResponse> task = () -> {
+                ready.countDown();
+                if (!go.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("Start timed out");
+                return mvc.perform(post("/api/walks/{id}/territory", walkId)).andReturn().getResponse();
+            };
+            Future<MockHttpServletResponse> first = executor.submit(task);
+            Future<MockHttpServletResponse> second = executor.submit(task);
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            go.countDown();
+            MockHttpServletResponse firstResponse = first.get(20, TimeUnit.SECONDS);
+            MockHttpServletResponse secondResponse = second.get(20, TimeUnit.SECONDS);
+            assertThat(firstResponse.getStatus()).isIn(200, 201);
+            assertThat(secondResponse.getStatus()).isIn(200, 201);
+            assertThat(JsonPath.<Number>read(firstResponse.getContentAsString(), "$.id").longValue())
+                .isEqualTo(JsonPath.<Number>read(secondResponse.getContentAsString(), "$.id").longValue());
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM territories", Long.class)).isEqualTo(1);
+        } finally {
+            go.countDown();
+            executor.shutdownNow();
+        }
+    }
+
     private long createWalk(String startedAt, String endedAt) throws Exception {
         MockHttpServletResponse response = submit(walkBody(UUID.randomUUID(), startedAt, endedAt));
         assertThat(response.getStatus()).isEqualTo(201);
@@ -254,6 +376,16 @@ class WalkApiIntegrationTest {
             + "\",\"points\":[{\"latitude\":29.7604,\"longitude\":-95.3698,\"recordedAt\":\""
             + startedAt + "\"},{\"latitude\":29.761,\"longitude\":-95.368,\"recordedAt\":\""
             + endedAt + "\"}]}";
+    }
+
+    private String routeBody(String startedAt, String endedAt, String... points) {
+        return "{\"clientWalkId\":\"" + UUID.randomUUID() + "\",\"startedAt\":\"" + startedAt
+            + "\",\"endedAt\":\"" + endedAt + "\",\"points\":[" + String.join(",", points) + "]}";
+    }
+
+    private String point(double latitude, double longitude, String recordedAt) {
+        return "{\"latitude\":" + latitude + ",\"longitude\":" + longitude
+            + ",\"recordedAt\":\"" + recordedAt + "\"}";
     }
 
     private MockHttpServletResponse submit(String body) throws Exception {

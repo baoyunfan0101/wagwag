@@ -3,6 +3,7 @@ package com.wagwag.api.walk;
 import com.wagwag.api.pet.PetRepository;
 import com.wagwag.api.walk.WalkInput.PointInput;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -17,6 +18,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class WalkService {
+    private static final double EARTH_RADIUS_METERS = 6_371_008.8;
+    private static final double MAX_WALK_SPEED_METERS_PER_SECOND = 12.0;
+
     private final JdbcTemplate jdbc;
     private final PetRepository pets;
     private final long devPetId;
@@ -31,18 +35,7 @@ public class WalkService {
     @Transactional
     public CreateResult create(WalkInput input) {
         long petId = actorId();
-        if (input.endedAt().isBefore(input.startedAt())
-            || input.endedAt().isAfter(Instant.now().plusSeconds(300))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid walk time");
-        }
-        Instant previous = input.startedAt();
-        for (PointInput point : input.points()) {
-            if (!Double.isFinite(point.latitude()) || !Double.isFinite(point.longitude())
-                || point.recordedAt().isBefore(previous) || point.recordedAt().isAfter(input.endedAt())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid walk point");
-            }
-            previous = point.recordedAt();
-        }
+        validateRoute(input);
         List<Long> inserted = jdbc.queryForList("INSERT INTO walks (pet_id, client_walk_id, started_at, ended_at, route) "
             + "VALUES (?, ?, ?, ?, ST_GeomFromText(?, 4326)) "
             + "ON CONFLICT (pet_id, client_walk_id) DO NOTHING RETURNING id",
@@ -66,6 +59,46 @@ public class WalkService {
         jdbc.batchUpdate("INSERT INTO walk_points (walk_id, sequence_number, latitude, longitude, recorded_at) "
             + "VALUES (?, ?, ?, ?, ?)", rows);
         return new CreateResult(detail(id), true);
+    }
+
+    private static void validateRoute(WalkInput input) {
+        if (input.endedAt().isBefore(input.startedAt())
+            || input.endedAt().isAfter(Instant.now().plusSeconds(300))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid walk time");
+        }
+        PointInput previous = null;
+        Instant previousStoredTime = null;
+        for (PointInput point : input.points()) {
+            if (!Double.isFinite(point.latitude()) || !Double.isFinite(point.longitude())
+                || point.recordedAt().isBefore(input.startedAt())
+                || point.recordedAt().isAfter(input.endedAt())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid walk point");
+            }
+            Instant storedTime = point.recordedAt().truncatedTo(ChronoUnit.MICROS);
+            if (previous != null) {
+                if (!storedTime.isAfter(previousStoredTime)) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid walk point timestamp");
+                }
+                Duration elapsed = Duration.between(previousStoredTime, storedTime);
+                double elapsedSeconds = elapsed.getSeconds() + elapsed.getNano() / 1_000_000_000.0;
+                double speed = distanceMeters(previous, point) / elapsedSeconds;
+                if (speed > MAX_WALK_SPEED_METERS_PER_SECOND) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Implausible walk segment");
+                }
+            }
+            previous = point;
+            previousStoredTime = storedTime;
+        }
+    }
+
+    private static double distanceMeters(PointInput first, PointInput second) {
+        double latitudeDelta = Math.toRadians(second.latitude() - first.latitude());
+        double longitudeDelta = Math.toRadians(second.longitude() - first.longitude());
+        double firstLatitude = Math.toRadians(first.latitude());
+        double secondLatitude = Math.toRadians(second.latitude());
+        double haversine = Math.pow(Math.sin(latitudeDelta / 2), 2)
+            + Math.cos(firstLatitude) * Math.cos(secondLatitude) * Math.pow(Math.sin(longitudeDelta / 2), 2);
+        return 2 * EARTH_RADIUS_METERS * Math.asin(Math.min(1, Math.sqrt(haversine)));
     }
 
     @Transactional(readOnly = true)
@@ -143,6 +176,8 @@ public class WalkService {
         }
         return devPetId;
     }
+
+    long activePetId() { return actorId(); }
 
     private static Timestamp timestamp(Instant instant) {
         return Timestamp.from(instant.truncatedTo(ChronoUnit.MICROS));
