@@ -1,10 +1,10 @@
 # WagWag
 
-Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. Module 2 adds posts, a chronological feed, likes, comments, and multi-image uploads. Module 3 adds follows, follow requests for private pets, block/mute controls, and a following feed. Module 4 adds communities, membership, community posts, moderation roles and rules, and discovery. PostgreSQL remains the source of truth; Redis caches relationship status and counts. The `dev` profile seeds the development user and pet (both ID 1), plus a demo neighbor pet (ID 1000) for trying social flows.
+Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. Module 2 adds posts, a chronological feed, likes, comments, and multi-image uploads. Module 3 adds follows, follow requests for private pets, block/mute controls, and a following feed. Module 4 adds communities, membership, community posts, moderation roles and rules, and discovery. Module 5A records foreground GPS walks and displays their routes on a map. PostgreSQL remains the source of truth; Redis caches relationship status and counts. The `dev` profile seeds the development user and pet (both ID 1), plus a demo neighbor pet (ID 1000) for trying social flows.
 
 ## Run locally
 
-Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
+Requirements: Java 21, Node.js, npm, Docker Desktop, and an iOS or Android simulator or device. Walk maps require a native development build; Expo Go does not include the Mapbox native SDK.
 
 1. Start PostgreSQL, SeaweedFS, and Redis from the repository root:
 
@@ -37,7 +37,9 @@ Requirements: Java 21, Node.js, npm, Docker Desktop, and Expo Go or a simulator.
 
    For a physical phone, replace `localhost` in `mobile/.env` and the API's `S3_ENDPOINT` and `S3_PUBLIC_BASE_URL` with the computer's LAN IP. Both the API and SeaweedFS must be reachable by the phone. Android emulators can use `10.0.2.2` for the host. Restart Expo after editing `.env`.
 
-   Tap **Feed** on the pet profile to create a post, like posts, and comment. The composer can upload up to four photos; selected photos are resized and compressed before upload. Tap **Friends** to find Biscuit, follow or unfollow pets, and view follower/following lists. The feed's **Following** filter shows posts from followed pets. A private pet must approve new follow requests. On a pet profile, you can mute its posts or block it; your own profile has the private setting and request list. Tap **Explore communities** to search, browse popular communities, create, join, and leave; joined pets can post from the community page. Owners can set moderators, and owners and moderators can edit rules, remove members, and remove posts from a community.
+   To use walk maps, set `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` in `mobile/.env` to a Mapbox **public** access token. A native build also needs a separate Mapbox **secret** token with `Downloads:Read` scope, configured locally for the platform SDK download: [iOS `.netrc`](https://docs.mapbox.com/ios/maps/guides/install/) or [Android Gradle properties](https://rnmapbox.github.io/docs/RNMapboxMapsDownloadTokenDetails). Never commit that secret token. After configuring it, build and run the native app with `npx expo run:ios` or `npx expo run:android` from `mobile/`; use `npm start` for later JavaScript changes. A simulator can display saved routes, but recording a real walk needs a device with GPS. Walk recording uses foreground location only, so keep the app open until you stop and save.
+
+   Tap **Feed** on the pet profile to create a post, like posts, and comment. The composer can upload up to four photos; selected photos are resized and compressed before upload. Tap **Friends** to find Biscuit, follow or unfollow pets, and view follower/following lists. The feed's **Following** filter shows posts from followed pets. A private pet must approve new follow requests. On a pet profile, you can mute its posts or block it; your own profile has the private setting and request list. Tap **Explore communities** to search, browse popular communities, create, join, and leave; joined pets can post from the community page. Owners can set moderators, and owners and moderators can edit rules, remove members, and remove posts from a community. Tap **Walks** on the pet profile to record a walk and revisit saved routes.
 
 ## Pre-release database policy
 
@@ -89,6 +91,9 @@ This deletes local PostgreSQL data, including posts and profiles, but leaves the
 | GET | `/api/feed?limit=20` | Read the first page of posts, newest first |
 | GET | `/api/feed?limit=20&cursor=...` | Read the next page using the previous `nextCursor` |
 | GET | `/api/feed?following=true&limit=20` | Read posts by followed pets, newest first |
+| POST | `/api/walks` | Save a completed walk with ordered GPS points |
+| GET | `/api/walks?limit=20&page=0` | List the active pet's walks, newest first |
+| GET | `/api/walks/{id}` | Read the active pet's saved route |
 | POST | `/api/posts/{id}/likes` | Like a post |
 | DELETE | `/api/posts/{id}/likes` | Unlike a post |
 | POST | `/api/posts/{id}/comments` | Add a comment |
@@ -99,6 +104,8 @@ The avatar request body is `{ "contentType": "image/jpeg" }`. Upload the bytes t
 To add photos, request a ticket with `{ "contentType": "image/jpeg" }` at `/api/posts/media-uploads`, PUT each image to its `uploadUrl` using all returned `headers`, then create a post with `{ "body": "Hello!", "imageKeys": ["pets/1/posts/...jpg"] }`. Text-only posts use an empty `imageKeys` list. Post-image upload tickets use unique keys and conditional, create-only writes; reusing a ticket cannot overwrite an existing object. Up to four distinct images are allowed; each must be JPEG, PNG, or WebP and no larger than 5 MB. The API verifies object metadata before saving the post. Responses include ordered `imageUrls`. PostgreSQL stores image URLs, not image bytes. Set `S3_PUBLIC_BASE_URL` to a public bucket or CDN prefix when deploying.
 
 The feed returns `{ "items": [...], "nextCursor": "..." }` in chronological newest-first order, with ID as the tie-breaker. `limit` defaults to 20 and must be between 1 and 50. A null `nextCursor` means there are no more posts. Clients should pass the cursor back unchanged and treat it as opaque.
+
+To save a walk, send `{ "clientWalkId": "a9ee0f56-095a-4ec8-bf87-e56531fdcdb9", "startedAt": "2026-10-03T10:00:00Z", "endedAt": "2026-10-03T10:10:00Z", "points": [{ "latitude": 29.7604, "longitude": -95.3698, "recordedAt": "2026-10-03T10:00:00Z" }] }` to `POST /api/walks`. Generate one UUID per walk and reuse the exact request body for retries. The first save returns 201; an identical retry returns the same walk with 200. Reusing the UUID for different walk data returns 409. Points must be chronological and within the walk time; a walk accepts 1-2000 points. The API stores coordinates in PostgreSQL for the active development pet. Walk history uses zero-based `page`, `limit` from 1 to 50, and a null `nextPage` at the end.
 
 Create a community with `{ "name": "Houston Dog Parks", "description": "Local walks" }`. Its creator joins automatically; join and leave are idempotent. Community lists use zero-based `page` and `nextPage`. To post in a community, include `"communityId": 123` in the existing post request while joined. A post belongs to at most one community. Community feeds use the same newest-first cursor contract and respect existing private-profile, block, and mute visibility rules.
 
