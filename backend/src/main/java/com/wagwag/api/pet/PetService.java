@@ -2,6 +2,8 @@ package com.wagwag.api.pet;
 
 import com.wagwag.api.storage.AvatarStorage;
 import com.wagwag.api.storage.AvatarStorage.UploadTicket;
+import com.wagwag.api.social.FollowService;
+import com.wagwag.api.social.SocialPairLock;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -13,15 +15,20 @@ public class PetService {
     private final PetRepository pets;
     private final UserRepository users;
     private final AvatarStorage storage;
+    private final FollowService follows;
+    private final SocialPairLock pairLock;
     private final long devUserId;
     private final long devPetId;
 
     public PetService(PetRepository pets, UserRepository users, AvatarStorage storage,
+                      FollowService follows, SocialPairLock pairLock,
                       @Value("${app.dev-user-id:0}") long devUserId,
                       @Value("${app.dev-pet-id:0}") long devPetId) {
         this.pets = pets;
         this.users = users;
         this.storage = storage;
+        this.follows = follows;
+        this.pairLock = pairLock;
         this.devUserId = devUserId;
         this.devPetId = devPetId;
     }
@@ -51,9 +58,11 @@ public class PetService {
         if (id != devPetId) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Pet is not the active development pet");
         }
+        pairLock.lockPet(id);
         Pet pet = owned(id);
         pet.setPrivateProfile(privateProfile);
         pets.flush();
+        if (!privateProfile) follows.acceptPendingForPublic(id);
         return PetResponse.from(pet);
     }
 

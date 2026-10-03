@@ -22,6 +22,14 @@ public interface PetFollowRepository extends JpaRepository<PetFollow, Long> {
         + "AND following_pet_id = :followingId AND accepted = FALSE", nativeQuery = true)
     int acceptPending(long followerId, long followingId);
 
+    @Query("select f.follower.id from PetFollow f where f.following.id = :petId and f.accepted = false")
+    List<Long> pendingFollowerIds(long petId);
+
+    @Modifying
+    @Query(value = "UPDATE pet_follows SET accepted = TRUE WHERE following_pet_id = :petId "
+        + "AND accepted = FALSE", nativeQuery = true)
+    int acceptAllPending(long petId);
+
     @Modifying
     @Query(value = "DELETE FROM pet_follows WHERE follower_pet_id = :followerId "
         + "AND following_pet_id = :followingId", nativeQuery = true)

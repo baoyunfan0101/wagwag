@@ -11,6 +11,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -20,23 +21,25 @@ public class FollowService {
     private final PetRepository pets;
     private final SocialRestrictions restrictions;
     private final FollowCache cache;
+    private final SocialPairLock pairLock;
     private final long devPetId;
 
     public FollowService(PetFollowRepository follows, PetRepository pets,
-                         SocialRestrictions restrictions, FollowCache cache,
+                         SocialRestrictions restrictions, FollowCache cache, SocialPairLock pairLock,
                          @Value("${app.dev-pet-id:0}") long devPetId) {
         this.follows = follows;
         this.pets = pets;
         this.restrictions = restrictions;
         this.cache = cache;
+        this.pairLock = pairLock;
         this.devPetId = devPetId;
     }
 
     @Transactional
     public FollowStatus follow(long petId) {
+        lockActorPair(petId);
         Pet actor = actor();
         Pet target = find(petId);
-        differentPets(actor.getId(), petId);
         if (restrictions.blockedEitherWay(actor.getId(), petId)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Follow is blocked");
         }
@@ -52,6 +55,7 @@ public class FollowService {
 
     @Transactional
     public FollowStatus unfollow(long petId) {
+        lockActorPair(petId);
         Pet actor = actor();
         Pet target = find(petId);
         follows.deletePair(actor.getId(), petId);
@@ -67,9 +71,9 @@ public class FollowService {
 
     @Transactional
     public FollowStatus block(long petId) {
+        lockActorPair(petId);
         long actorId = actor().getId();
         Pet target = find(petId);
-        differentPets(actorId, petId);
         restrictions.block(actorId, petId);
         follows.deletePair(actorId, petId);
         follows.deletePair(petId, actorId);
@@ -81,6 +85,7 @@ public class FollowService {
 
     @Transactional
     public FollowStatus unblock(long petId) {
+        lockActorPair(petId);
         long actorId = actor().getId();
         Pet target = find(petId);
         restrictions.unblock(actorId, petId);
@@ -132,6 +137,7 @@ public class FollowService {
 
     @Transactional
     public FollowStatus approve(long petId, long followerId) {
+        pairLock.lock(petId, followerId);
         Pet actor = ownPet(petId);
         find(followerId);
         if (restrictions.blockedEitherWay(followerId, petId)
@@ -144,10 +150,19 @@ public class FollowService {
 
     @Transactional
     public FollowStatus decline(long petId, long followerId) {
+        pairLock.lock(petId, followerId);
         Pet actor = ownPet(petId);
         follows.declinePending(followerId, petId);
         cache.evictAfterCommit(followerId, petId);
         return statusFor(actor, petId, false);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void acceptPendingForPublic(long petId) {
+        List<Long> followerIds = follows.pendingFollowerIds(petId);
+        if (followerIds.isEmpty()) return;
+        follows.acceptAllPending(petId);
+        for (long followerId : followerIds) cache.evictAfterCommit(followerId, petId);
     }
 
     private PetListPage page(Page<Pet> result, long actorId) {
@@ -219,6 +234,11 @@ public class FollowService {
         if (actorId == targetId) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Pets cannot target themselves");
         }
+    }
+
+    private void lockActorPair(long targetId) {
+        differentPets(devPetId, targetId);
+        pairLock.lock(devPetId, targetId);
     }
 
     private static PageRequest pagination(int limit, int page) {
