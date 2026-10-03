@@ -37,7 +37,7 @@ class DefaultConfigurationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pets", Long.class)).isZero();
         for (String table : new String[] {"posts", "post_media", "likes", "comments",
                 "pet_follows", "pet_blocks", "pet_mutes", "communities",
-                "community_members", "post_communities"}) {
+                "community_members", "post_communities", "tasks", "task_assignments"}) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class)).isZero();
         }
 
@@ -73,6 +73,12 @@ class DefaultConfigurationTest {
         jdbc.update("INSERT INTO post_communities (post_id, community_id) VALUES (1, 1)");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO post_communities (post_id, community_id) "
             + "VALUES (1, 1)"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        jdbc.update("INSERT INTO tasks (id, creator_pet_id, title, description, category, latitude, longitude) "
+            + "VALUES (1, 1, 'Walk', 'Walk the dog', 'DOG_WALKING', 29.76, -95.37)");
+        jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (1, 2)");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (1, 1)"))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 }
