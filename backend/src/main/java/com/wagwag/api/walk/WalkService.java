@@ -144,6 +144,8 @@ public class WalkService {
         return devPetId;
     }
 
+    long activePetId() { return actorId(); }
+
     private static Timestamp timestamp(Instant instant) {
         return Timestamp.from(instant.truncatedTo(ChronoUnit.MICROS));
     }
