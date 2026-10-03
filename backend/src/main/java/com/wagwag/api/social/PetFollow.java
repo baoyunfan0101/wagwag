@@ -28,10 +28,15 @@ public class PetFollow {
     @JoinColumn(name = "following_pet_id", nullable = false)
     private Pet following;
 
+    @Column(nullable = false)
+    private boolean accepted;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
     protected PetFollow() {}
+
+    public boolean isAccepted() { return accepted; }
 
     @PrePersist
     void onCreate() { createdAt = Instant.now(); }

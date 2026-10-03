@@ -30,6 +30,18 @@ public class FollowController {
     @DeleteMapping("/{id}/follow")
     public FollowStatus unfollow(@PathVariable long id) { return service.unfollow(id); }
 
+    @PostMapping("/{id}/block")
+    public FollowStatus block(@PathVariable long id) { return service.block(id); }
+
+    @DeleteMapping("/{id}/block")
+    public FollowStatus unblock(@PathVariable long id) { return service.unblock(id); }
+
+    @PostMapping("/{id}/mute")
+    public FollowStatus mute(@PathVariable long id) { return service.mute(id); }
+
+    @DeleteMapping("/{id}/mute")
+    public FollowStatus unmute(@PathVariable long id) { return service.unmute(id); }
+
     @GetMapping("/{id}/followers")
     public PetListPage followers(@PathVariable long id,
                                  @RequestParam(defaultValue = "20") int limit,
@@ -42,5 +54,22 @@ public class FollowController {
                                  @RequestParam(defaultValue = "20") int limit,
                                  @RequestParam(defaultValue = "0") int page) {
         return service.following(id, limit, page);
+    }
+
+    @GetMapping("/{id}/follow-requests")
+    public PetListPage requests(@PathVariable long id,
+                                @RequestParam(defaultValue = "20") int limit,
+                                @RequestParam(defaultValue = "0") int page) {
+        return service.requests(id, limit, page);
+    }
+
+    @PostMapping("/{id}/follow-requests/{followerId}")
+    public FollowStatus approve(@PathVariable long id, @PathVariable long followerId) {
+        return service.approve(id, followerId);
+    }
+
+    @DeleteMapping("/{id}/follow-requests/{followerId}")
+    public FollowStatus decline(@PathVariable long id, @PathVariable long followerId) {
+        return service.decline(id, followerId);
     }
 }

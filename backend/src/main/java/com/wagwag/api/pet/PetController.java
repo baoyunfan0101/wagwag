@@ -3,6 +3,7 @@ package com.wagwag.api.pet;
 import com.wagwag.api.storage.AvatarStorage.UploadTicket;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,6 +35,11 @@ public class PetController {
         return service.update(id, input);
     }
 
+    @PutMapping("/{id}/privacy")
+    public PetResponse privacy(@PathVariable long id, @Valid @RequestBody PrivacyInput input) {
+        return service.privacy(id, input.privateProfile());
+    }
+
     @PostMapping("/{id}/avatar-uploads")
     public UploadTicket prepareAvatar(@PathVariable long id,
                                       @Valid @RequestBody AvatarUploadInput input) {
@@ -48,4 +54,5 @@ public class PetController {
 
     public record AvatarUploadInput(@NotBlank String contentType) {}
     public record AvatarKeyInput(@NotBlank String key) {}
+    public record PrivacyInput(@NotNull Boolean privateProfile) {}
 }
