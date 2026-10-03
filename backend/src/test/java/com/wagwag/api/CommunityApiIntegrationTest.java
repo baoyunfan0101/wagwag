@@ -1,25 +1,30 @@
 package com.wagwag.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -31,24 +36,32 @@ class CommunityApiIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
+    @Container
+    static final GenericContainer<?> redis = new GenericContainer<>("redis:7.4-alpine")
+        .withExposedPorts(6379);
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("app.follow-cache.enabled", () -> false);
+        registry.add("spring.data.redis.url", () -> "redis://" + redis.getHost() + ":" + redis.getMappedPort(6379));
     }
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
+    @Autowired StringRedisTemplate cache;
 
     @BeforeEach
     void clean() {
+        cache.delete("wagwag:community:hot-ids");
         jdbc.update("DELETE FROM pet_blocks");
         jdbc.update("DELETE FROM pet_follows");
         jdbc.update("DELETE FROM posts");
         jdbc.update("DELETE FROM community_members");
         jdbc.update("DELETE FROM communities");
+        jdbc.update("DELETE FROM pets WHERE id NOT IN (1, 1000)");
         jdbc.update("UPDATE pets SET private_profile = FALSE WHERE id = 1000");
     }
 
@@ -57,7 +70,8 @@ class CommunityApiIntegrationTest {
         long id = createCommunity("Houston Dog Parks");
         mvc.perform(get("/api/communities/{id}", id))
             .andExpect(jsonPath("$.joinedByMe").value(true))
-            .andExpect(jsonPath("$.memberCount").value(1));
+            .andExpect(jsonPath("$.memberCount").value(1))
+            .andExpect(jsonPath("$.myRole").value("OWNER"));
         mvc.perform(post("/api/communities").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"name\":\"houston dog parks\"}"))
             .andExpect(status().isConflict());
@@ -73,7 +87,8 @@ class CommunityApiIntegrationTest {
             .andExpect(jsonPath("$.items[0].id").value(id))
             .andExpect(jsonPath("$.nextPage").value((Object) null));
         mvc.perform(get("/api/communities/{id}/members", id))
-            .andExpect(jsonPath("$.items[0].name").value("Mochi"));
+            .andExpect(jsonPath("$.items[0].name").value("Mochi"))
+            .andExpect(jsonPath("$.items[0].role").value("OWNER"));
         jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1000)", id);
         mvc.perform(get("/api/communities/{id}/members", id).param("limit", "1"))
             .andExpect(jsonPath("$.items[0].name").value("Mochi"))
@@ -82,10 +97,7 @@ class CommunityApiIntegrationTest {
             .andExpect(jsonPath("$.items[0].name").value("Biscuit"))
             .andExpect(jsonPath("$.nextPage").value((Object) null));
 
-        mvc.perform(delete("/api/communities/{id}/members", id))
-            .andExpect(jsonPath("$.memberCount").value(1))
-            .andExpect(jsonPath("$.joinedByMe").value(false));
-        mvc.perform(delete("/api/communities/{id}/members", id)).andExpect(status().isOk());
+        mvc.perform(delete("/api/communities/{id}/members", id)).andExpect(status().isConflict());
         mvc.perform(post("/api/communities/{id}/members", id))
             .andExpect(jsonPath("$.memberCount").value(2));
         mvc.perform(post("/api/communities/{id}/members", id))
@@ -97,12 +109,120 @@ class CommunityApiIntegrationTest {
             .andExpect(status().isBadRequest());
         mvc.perform(get("/api/communities").param("limit", "0")).andExpect(status().isBadRequest());
         mvc.perform(get("/api/communities/999999")).andExpect(status().isNotFound());
+
+        long other = jdbc.queryForObject("INSERT INTO communities (name, created_by_pet_id) "
+            + "VALUES ('Owned by Biscuit', 1000) RETURNING id", Long.class);
+        jdbc.update("INSERT INTO community_members (community_id, pet_id, role) "
+            + "VALUES (?, 1000, 'OWNER')", other);
+        mvc.perform(post("/api/communities/{id}/members", other))
+            .andExpect(jsonPath("$.myRole").value("MEMBER"));
+        mvc.perform(delete("/api/communities/{id}/members", other))
+            .andExpect(jsonPath("$.joinedByMe").value(false));
+        mvc.perform(delete("/api/communities/{id}/members", other)).andExpect(status().isOk());
+    }
+
+    @Test
+    void rulesRolesAndManagerPermissions() throws Exception {
+        long id = createCommunity("Trail Friends");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1000)", id);
+        mvc.perform(put("/api/communities/{id}", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"  Local hiking routes  \",\"rules\":\"  Stay on trails  \"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.rules").value("Stay on trails"))
+            .andExpect(jsonPath("$.description").value("Local hiking routes"));
+        mvc.perform(put("/api/communities/{id}/members/1000/role", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"MODERATOR\"}"))
+            .andExpect(status().isNoContent());
+        mvc.perform(get("/api/communities/{id}/members", id))
+            .andExpect(jsonPath("$.items[1].role").value("MODERATOR"));
+        mvc.perform(put("/api/communities/{id}/members/1/role", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"MEMBER\"}"))
+            .andExpect(status().isConflict());
+        mvc.perform(put("/api/communities/{id}/members/1000/role", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"OWNER\"}"))
+            .andExpect(status().isBadRequest());
+        long postId = createCommunityPost(id, "Moderated post");
+        mvc.perform(delete("/api/communities/{id}/posts/{postId}", id, postId))
+            .andExpect(status().isNoContent());
+        mvc.perform(get("/api/communities/{id}/feed", id))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/posts/{id}", postId)).andExpect(status().isOk());
+        mvc.perform(delete("/api/communities/{id}/posts/{postId}", id, postId))
+            .andExpect(status().isNotFound());
+        mvc.perform(delete("/api/communities/{id}/members/1000", id)).andExpect(status().isNoContent());
+        mvc.perform(delete("/api/communities/{id}/members/1000", id)).andExpect(status().isNoContent());
+        mvc.perform(get("/api/communities/{id}", id)).andExpect(jsonPath("$.memberCount").value(1));
+        assertThatThrownBy(() -> jdbc.update("UPDATE community_members SET role = 'ADMIN' "
+            + "WHERE community_id = ? AND pet_id = 1", id))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        jdbc.update("UPDATE community_members SET role = 'MEMBER' WHERE community_id = ? AND pet_id = 1", id);
+        mvc.perform(put("/api/communities/{id}", id).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"rules\":\"No rules\"}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(put("/api/communities/{id}/members/1000/role", id)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"MODERATOR\"}"))
+            .andExpect(status().isForbidden());
+
+        long moderated = jdbc.queryForObject("INSERT INTO communities (name, created_by_pet_id) "
+            + "VALUES ('Biscuit Club', 1000) RETURNING id", Long.class);
+        jdbc.update("INSERT INTO community_members (community_id, pet_id, role) "
+            + "VALUES (?, 1000, 'OWNER'), (?, 1, 'MODERATOR')", moderated, moderated);
+        long thirdPet = jdbc.queryForObject("INSERT INTO pets (owner_id, name, species, gender) "
+            + "VALUES (1, 'Peanut', 'Dog', 'UNKNOWN') RETURNING id", Long.class);
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, ?)", moderated, thirdPet);
+        mvc.perform(put("/api/communities/{id}", moderated).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"rules\":\"Be friendly\"}"))
+            .andExpect(jsonPath("$.rules").value("Be friendly"));
+        mvc.perform(put("/api/communities/{id}/members/{petId}/role", moderated, thirdPet)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"role\":\"MODERATOR\"}"))
+            .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/communities/{id}/members/1000", moderated))
+            .andExpect(status().isForbidden());
+        mvc.perform(delete("/api/communities/{id}/members/{petId}", moderated, thirdPet))
+            .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void fullTextSearchAndHotSort() throws Exception {
+        long trails = createCommunity("Trail Friends");
+        long cats = createCommunity("Senior Cats");
+        mvc.perform(put("/api/communities/{id}", trails).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"description\":\"Group hiking routes\",\"rules\":\"Respect nature\"}"))
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/communities").param("query", "hiking"))
+            .andExpect(jsonPath("$.items[0].id").value(trails));
+        mvc.perform(get("/api/communities").param("query", "nature"))
+            .andExpect(jsonPath("$.items[0].id").value(trails));
+        mvc.perform(get("/api/communities").param("query", "unrelated"))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/communities").param("sort", "recent"))
+            .andExpect(jsonPath("$.items[0].id").value(cats));
+        mvc.perform(get("/api/communities").param("sort", "hot"))
+            .andExpect(jsonPath("$.items[0].id").value(cats));
+        mvc.perform(get("/api/communities").param("sort", "hot").param("limit", "1"))
+            .andExpect(jsonPath("$.items[0].id").value(cats))
+            .andExpect(jsonPath("$.nextPage").value(1));
+        mvc.perform(get("/api/communities").param("sort", "hot")
+                .param("limit", "1").param("page", "1"))
+            .andExpect(jsonPath("$.items[0].id").value(trails));
+        assertThat(cache.hasKey("wagwag:community:hot-ids")).isTrue();
+        createCommunityPost(trails, "Today's trail meetup");
+        assertThat(cache.hasKey("wagwag:community:hot-ids")).isFalse();
+        mvc.perform(get("/api/communities").param("sort", "hot"))
+            .andExpect(jsonPath("$.items[0].id").value(trails));
+        mvc.perform(get("/api/communities").param("sort", "unknown"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/communities").param("query", "x".repeat(101)))
+            .andExpect(status().isBadRequest());
     }
 
     @Test
     void communityPostsRequireMembershipAndKeepFeedPagination() throws Exception {
-        long id = createCommunity("Corgi Club");
-        mvc.perform(delete("/api/communities/{id}/members", id)).andExpect(status().isOk());
+        long id = jdbc.queryForObject("INSERT INTO communities (name, created_by_pet_id) "
+            + "VALUES ('Corgi Club', 1000) RETURNING id", Long.class);
+        jdbc.update("INSERT INTO community_members (community_id, pet_id, role) "
+            + "VALUES (?, 1000, 'OWNER')", id);
         mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"body\":\"not a member\",\"communityId\":" + id + "}"))
             .andExpect(status().isForbidden());
