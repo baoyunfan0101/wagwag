@@ -5,7 +5,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from '
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PostCard } from '@/components/PostCard';
 import {
-  getCommunity, getCommunityFeed, joinCommunity, leaveCommunity, likePost, unlikePost,
+  getCommunity, getCommunityFeed, joinCommunity, leaveCommunity, likePost, unlikePost, removeCommunityPost,
   type Community, type Post,
 } from '@/lib/api';
 import { colors } from '@/lib/theme';
@@ -97,6 +97,18 @@ export default function CommunityScreen() {
     } finally { setBusyLikeId(null); }
   }
 
+  async function removePost(post: Post) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await removeCommunityPost(communityId, post.id);
+      setPosts((existing) => existing.filter((item) => item.id !== post.id));
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not remove the post.');
+    } finally { setBusy(false); }
+  }
+
   return <SafeAreaView style={styles.safe}>
     <FlatList data={posts} keyExtractor={(post) => String(post.id)} contentContainerStyle={styles.content}
       refreshing={refreshing} onRefresh={() => void loadFirst(true)}
@@ -111,14 +123,23 @@ export default function CommunityScreen() {
         {community && <View style={styles.hero}>
           <Text style={styles.name}>{community.name}</Text>
           <Text style={styles.description}>{community.description || 'A place for pets to connect.'}</Text>
+          {community.rules && <View style={styles.rulesBox}>
+            <Text style={styles.rulesTitle}>Community rules</Text>
+            <Text style={styles.description}>{community.rules}</Text>
+          </View>}
+          {(community.myRole === 'OWNER' || community.myRole === 'MODERATOR') &&
+            <Pressable onPress={() => router.push({ pathname: '/community/settings', params: { id: String(communityId) } })}>
+              <Text style={styles.manage}>Edit community details and rules</Text>
+            </Pressable>}
           <Pressable onPress={() => router.push({ pathname: '/community-members', params: { id: String(communityId) } })}>
             <Text style={styles.members}>{community.memberCount} members  /  View members</Text>
           </Pressable>
-          <Pressable style={[styles.join, community.joinedByMe && styles.joined]} onPress={() => void toggleJoin()} disabled={busy}>
+          {community.myRole !== 'OWNER' && <Pressable style={[styles.join, community.joinedByMe && styles.joined]}
+            onPress={() => void toggleJoin()} disabled={busy}>
             {busy ? <ActivityIndicator color="white" /> : <Text style={styles.joinText}>
               {community.joinedByMe ? 'Leave community' : 'Join community'}
             </Text>}
-          </Pressable>
+          </Pressable>}
         </View>}
         {community?.joinedByMe && <Pressable style={styles.compose}
           onPress={() => router.push({ pathname: '/compose', params: { communityId: String(communityId) } })}>
@@ -130,10 +151,16 @@ export default function CommunityScreen() {
           <Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>Try again</Text></Pressable>
         </View>}
       </>}
-      renderItem={({ item }) => <PostCard post={item}
-        onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
-        onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.petId) } })}
-        onLike={() => void toggleLike(item)} likeBusy={busyLikeId === item.id} />}
+      renderItem={({ item }) => <View>
+        <PostCard post={item}
+          onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
+          onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.petId) } })}
+          onLike={() => void toggleLike(item)} likeBusy={busyLikeId === item.id} />
+        {(community?.myRole === 'OWNER' || community?.myRole === 'MODERATOR') &&
+          <Pressable style={styles.removePost} onPress={() => void removePost(item)} disabled={busy}>
+            <Text style={styles.removePostText}>Remove from community</Text>
+          </Pressable>}
+      </View>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.empty} color={colors.accent} />
         : !error ? <Text style={styles.empty}>No posts yet. Join and share the first story.</Text> : null}
       ListFooterComponent={posts.length > 0 ? <View style={styles.footer}>
@@ -154,6 +181,9 @@ const styles = StyleSheet.create({
   hero: { backgroundColor: colors.card, borderRadius: 22, padding: 22, borderWidth: 1, borderColor: colors.line },
   name: { color: colors.ink, fontSize: 28, fontWeight: '900' },
   description: { color: colors.muted, marginTop: 8, lineHeight: 20 },
+  rulesBox: { marginTop: 18, padding: 14, borderRadius: 14, backgroundColor: colors.background },
+  rulesTitle: { color: colors.ink, fontWeight: '800' },
+  manage: { color: colors.accent, marginTop: 14, fontWeight: '800' },
   members: { color: colors.green, marginTop: 16, fontWeight: '800' },
   join: { backgroundColor: colors.accent, borderRadius: 14, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 18 },
   joined: { backgroundColor: colors.green },
@@ -166,5 +196,7 @@ const styles = StyleSheet.create({
   footer: { minHeight: 50, alignItems: 'center' },
   errorBox: { backgroundColor: colors.accentPale, borderRadius: 13, padding: 14, marginBottom: 16 },
   error: { color: '#B23725' },
+  removePost: { alignItems: 'flex-end', marginTop: -4, marginBottom: 16 },
+  removePostText: { color: '#B23725', fontWeight: '700', fontSize: 12 },
   retry: { color: colors.accent, fontWeight: '800', marginTop: 8 },
 });

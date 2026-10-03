@@ -10,6 +10,7 @@ export default function CommunitiesScreen() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<'recent' | 'hot'>('recent');
   const [items, setItems] = useState<Community[]>([]);
   const [nextPage, setNextPage] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +30,7 @@ export default function CommunitiesScreen() {
     if (refresh) setRefreshing(true);
     else { setLoading(true); setItems([]); }
     try {
-      const page = await getCommunities(query);
+      const page = await getCommunities(query, 20, 0, sort);
       if (current !== generation.current) return;
       setItems(page.items);
       setNextPage(page.nextPage);
@@ -39,7 +40,7 @@ export default function CommunitiesScreen() {
     } finally {
       if (current === generation.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [query]);
+  }, [query, sort]);
 
   useFocusEffect(useCallback(() => { void loadFirst(); }, [loadFirst]));
 
@@ -51,7 +52,7 @@ export default function CommunitiesScreen() {
     setLoadingMore(true);
     setLoadMoreError(null);
     try {
-      const page = await getCommunities(query, 20, nextPage);
+      const page = await getCommunities(query, 20, nextPage, sort);
       if (current !== generation.current) return;
       lastLoadedPage.current = nextPage;
       setItems((existing) => {
@@ -89,6 +90,14 @@ export default function CommunitiesScreen() {
             <Ionicons name="search" size={20} color="white" />
           </Pressable>
         </View>
+        <View style={styles.sortRow}>
+          <Pressable onPress={() => setSort('recent')} style={[styles.sort, sort === 'recent' && styles.activeSort]}>
+            <Text style={sort === 'recent' ? styles.activeSortText : styles.sortText}>Newest</Text>
+          </Pressable>
+          <Pressable onPress={() => setSort('hot')} style={[styles.sort, sort === 'hot' && styles.activeSort]}>
+            <Text style={sort === 'hot' ? styles.activeSortText : styles.sortText}>Popular</Text>
+          </Pressable>
+        </View>
         {error && <View style={styles.errorBox}>
           <Text style={styles.error}>{error}</Text>
           <Pressable onPress={() => void loadFirst()}><Text style={styles.retry}>Try again</Text></Pressable>
@@ -122,6 +131,11 @@ const styles = StyleSheet.create({
   searchRow: { flexDirection: 'row', gap: 8, marginBottom: 20 },
   search: { flex: 1, backgroundColor: colors.card, borderRadius: 13, paddingHorizontal: 14, minHeight: 46, color: colors.ink },
   searchButton: { width: 46, borderRadius: 13, backgroundColor: colors.green, alignItems: 'center', justifyContent: 'center' },
+  sortRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  sort: { paddingHorizontal: 16, paddingVertical: 9, borderRadius: 12, backgroundColor: colors.card },
+  activeSort: { backgroundColor: colors.green },
+  sortText: { color: colors.ink, fontWeight: '700' },
+  activeSortText: { color: 'white', fontWeight: '700' },
   card: { backgroundColor: colors.card, borderRadius: 18, padding: 18, marginBottom: 12, borderWidth: 1, borderColor: colors.line },
   name: { color: colors.ink, fontSize: 18, fontWeight: '800' },
   description: { color: colors.muted, marginTop: 6, lineHeight: 19 },

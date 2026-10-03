@@ -61,13 +61,16 @@ export type Community = {
   id: number;
   name: string;
   description: string | null;
+  rules: string | null;
   createdByPetId: number;
   createdAt: string;
   memberCount: number;
   joinedByMe: boolean;
+  myRole: 'OWNER' | 'MODERATOR' | 'MEMBER' | null;
 };
 export type CommunityPage = { items: Community[]; nextPage: number | null };
-export type CommunityMember = { id: number; name: string; species: string; avatarUrl: string | null };
+export type CommunityMember = { id: number; name: string; species: string; avatarUrl: string | null;
+  role: 'OWNER' | 'MODERATOR' | 'MEMBER' };
 export type CommunityMemberPage = { items: CommunityMember[]; nextPage: number | null };
 export type Comment = {
   id: number;
@@ -96,6 +99,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const problem = await response.json().catch(() => ({}));
     throw new Error(problem.detail || problem.message || `Request failed (${response.status})`);
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -170,8 +174,8 @@ export function getFeed(limit = 20, cursor?: string, following = false): Promise
   return request<FeedPage>(`/api/feed?${query}`);
 }
 
-export function getCommunities(query = '', limit = 20, page = 0): Promise<CommunityPage> {
-  return request<CommunityPage>(`/api/communities?query=${encodeURIComponent(query)}&limit=${limit}&page=${page}`);
+export function getCommunities(query = '', limit = 20, page = 0, sort: 'recent' | 'hot' = 'recent'): Promise<CommunityPage> {
+  return request<CommunityPage>(`/api/communities?query=${encodeURIComponent(query)}&sort=${sort}&limit=${limit}&page=${page}`);
 }
 
 export function createCommunity(name: string, description: string): Promise<Community> {
@@ -182,6 +186,26 @@ export function createCommunity(name: string, description: string): Promise<Comm
 
 export function getCommunity(id: number): Promise<Community> {
   return request<Community>(`/api/communities/${id}`);
+}
+
+export function updateCommunity(id: number, description: string, rules: string): Promise<Community> {
+  return request<Community>(`/api/communities/${id}`, {
+    method: 'PUT', body: JSON.stringify({ description: description.trim() || null, rules: rules.trim() || null }),
+  });
+}
+
+export function setCommunityMemberRole(id: number, petId: number, role: 'MEMBER' | 'MODERATOR'): Promise<void> {
+  return request<void>(`/api/communities/${id}/members/${petId}/role`, {
+    method: 'PUT', body: JSON.stringify({ role }),
+  });
+}
+
+export function removeCommunityMember(id: number, petId: number): Promise<void> {
+  return request<void>(`/api/communities/${id}/members/${petId}`, { method: 'DELETE' });
+}
+
+export function removeCommunityPost(id: number, postId: number): Promise<void> {
+  return request<void>(`/api/communities/${id}/posts/${postId}`, { method: 'DELETE' });
 }
 
 export function joinCommunity(id: number): Promise<Community> {

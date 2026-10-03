@@ -3,7 +3,8 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getCommunityMembers, type CommunityMember } from '@/lib/api';
+import { DEV_PET_ID, getCommunity, getCommunityMembers, removeCommunityMember,
+  setCommunityMemberRole, type CommunityMember, type Community } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
 export default function CommunityMembersScreen() {
@@ -11,11 +12,13 @@ export default function CommunityMembersScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const communityId = Number(id);
   const [items, setItems] = useState<CommunityMember[]>([]);
+  const [myRole, setMyRole] = useState<Community['myRole']>(null);
   const [nextPage, setNextPage] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
   const generation = useRef(0);
   const nextInFlight = useRef(false);
   const lastLoadedPage = useRef<number | null>(null);
@@ -27,9 +30,10 @@ export default function CommunityMembersScreen() {
     if (refresh) setRefreshing(true);
     else { setLoading(true); setItems([]); }
     try {
-      const page = await getCommunityMembers(communityId);
+      const [page, community] = await Promise.all([getCommunityMembers(communityId), getCommunity(communityId)]);
       if (current !== generation.current) return;
       setItems(page.items);
+      setMyRole(community.myRole);
       setNextPage(page.nextPage);
       setError(null);
     } catch (cause) {
@@ -64,6 +68,29 @@ export default function CommunityMembersScreen() {
     }
   }
 
+  async function changeRole(member: CommunityMember) {
+    if (busyId !== null) return;
+    setBusyId(member.id);
+    try {
+      await setCommunityMemberRole(communityId, member.id,
+        member.role === 'MODERATOR' ? 'MEMBER' : 'MODERATOR');
+      await loadFirst(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update role.');
+    } finally { setBusyId(null); }
+  }
+
+  async function remove(member: CommunityMember) {
+    if (busyId !== null) return;
+    setBusyId(member.id);
+    try {
+      await removeCommunityMember(communityId, member.id);
+      await loadFirst(true);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not remove member.');
+    } finally { setBusyId(null); }
+  }
+
   return <SafeAreaView style={styles.safe}>
     <FlatList data={items} keyExtractor={(item) => String(item.id)} contentContainerStyle={styles.content}
       refreshing={refreshing} onRefresh={() => void loadFirst(true)}
@@ -83,7 +110,20 @@ export default function CommunityMembersScreen() {
         onPress={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.id) } })}>
         {item.avatarUrl ? <Image source={{ uri: item.avatarUrl }} style={styles.avatar} /> :
           <View style={styles.avatarFallback}><Ionicons name="paw" size={20} color={colors.accent} /></View>}
-        <View><Text style={styles.name}>{item.name}</Text><Text style={styles.species}>{item.species}</Text></View>
+        <View style={styles.memberInfo}><Text style={styles.name}>{item.name}</Text>
+          <Text style={styles.species}>{item.species}  /  {item.role.toLowerCase()}</Text>
+        </View>
+        {item.id !== DEV_PET_ID && <View style={styles.actions}>
+          {myRole === 'OWNER' && item.role !== 'OWNER' && <Pressable
+            onPress={(event) => { event.stopPropagation(); void changeRole(item); }} disabled={busyId !== null}>
+            <Text style={styles.action}>{item.role === 'MODERATOR' ? 'Demote' : 'Make mod'}</Text>
+          </Pressable>}
+          {(myRole === 'OWNER' || (myRole === 'MODERATOR' && item.role === 'MEMBER')) &&
+            item.role !== 'OWNER' && <Pressable
+              onPress={(event) => { event.stopPropagation(); void remove(item); }} disabled={busyId !== null}>
+              <Text style={styles.remove}>Remove</Text>
+            </Pressable>}
+        </View>}
       </Pressable>}
       ListEmptyComponent={loading ? <ActivityIndicator style={styles.empty} color={colors.accent} />
         : !error ? <Text style={styles.empty}>No members yet.</Text> : null}
@@ -104,7 +144,11 @@ const styles = StyleSheet.create({
   avatarFallback: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.accentPale,
     alignItems: 'center', justifyContent: 'center' },
   name: { color: colors.ink, fontWeight: '800', fontSize: 16 },
+  memberInfo: { flex: 1 },
   species: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  actions: { alignItems: 'flex-end', gap: 8 },
+  action: { color: colors.green, fontWeight: '800' },
+  remove: { color: '#B23725', fontWeight: '800' },
   empty: { minHeight: 180, textAlign: 'center', textAlignVertical: 'center', color: colors.muted },
   errorBox: { backgroundColor: colors.accentPale, borderRadius: 12, padding: 14, marginBottom: 16 },
   error: { color: '#B23725' },

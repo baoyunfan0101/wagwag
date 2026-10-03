@@ -24,6 +24,8 @@ app:
   allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8081,http://localhost:19006}
   follow-cache:
     enabled: ${FOLLOW_CACHE_ENABLED:true}
+  community-hot-cache:
+    enabled: ${COMMUNITY_HOT_CACHE_ENABLED:true}
   storage:
     bucket: ${S3_BUCKET:}
     region: ${AWS_REGION:us-east-1}
