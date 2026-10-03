@@ -3,6 +3,7 @@ package com.wagwag.api.walk;
 import com.wagwag.api.walk.WalkService.WalkPage;
 import com.wagwag.api.walk.WalkService.CreateResult;
 import com.wagwag.api.walk.WalkService.WalkResponse;
+import com.wagwag.api.walk.WalkService.NearbyWalkPage;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
@@ -37,4 +38,12 @@ public class WalkController {
 
     @GetMapping("/{id}")
     public WalkResponse detail(@PathVariable long id) { return walks.detail(id); }
+
+    @GetMapping("/nearby")
+    public NearbyWalkPage nearby(@RequestParam double latitude, @RequestParam double longitude,
+                                @RequestParam(defaultValue = "1000") double radiusMeters,
+                                @RequestParam(defaultValue = "20") int limit,
+                                @RequestParam(defaultValue = "0") int page) {
+        return walks.nearby(latitude, longitude, radiusMeters, limit, page);
+    }
 }

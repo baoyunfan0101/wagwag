@@ -1,13 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { useNavigation, useRouter } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import WalkMap from '@/components/WalkMap';
-import { createWalk, type WalkInput, type WalkPoint } from '@/lib/api';
+import { createWalk, type WalkInput } from '@/lib/api';
+import { clearSavedWalk, discardWalkDraft, loadWalkDraft, startWalkTracking, stopWalkTracking,
+  subscribeWalk, type WalkDraft } from '@/lib/walkTracking';
 import { colors } from '@/lib/theme';
 
 type Phase = 'idle' | 'starting' | 'tracking' | 'saving' | 'saveFailed';
@@ -16,40 +19,30 @@ export default function LiveWalkScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const [phase, setPhase] = useState<Phase>('idle');
+  const phaseRef = useRef<Phase>('idle');
+  const [loadingDraft, setLoadingDraft] = useState(true);
   const [allowNavigation, setAllowNavigation] = useState(false);
-  const [points, setPoints] = useState<WalkPoint[]>([]);
+  const [draft, setDraft] = useState<WalkDraft | null>(null);
+  const [background, setBackground] = useState(Platform.OS !== 'web');
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const pointsRef = useRef<WalkPoint[]>([]);
-  const clientWalkIdRef = useRef<string | null>(null);
-  const startedRef = useRef<string | null>(null);
   const pendingRef = useRef<WalkInput | null>(null);
   const blockedNavigationRef = useRef<(() => void) | null>(null);
   const savedWalkIdRef = useRef<number | null>(null);
   const startGenerationRef = useRef(0);
-  const startInFlightRef = useRef(false);
-  const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
-  const activeRef = useRef(false);
   const mountedRef = useRef(true);
-  const savingRef = useRef(false);
+  const discardingRef = useRef(false);
 
-  usePreventRemove(phase !== 'idle' && !allowNavigation, ({ data }) => {
-    if (phase === 'saving') {
-      if (Platform.OS !== 'web') Alert.alert('Saving walk', 'Please wait for the save to finish.');
+  function transition(next: Phase) { phaseRef.current = next; setPhase(next); }
+
+  usePreventRemove((loadingDraft || phase !== 'idle') && !allowNavigation, ({ data }) => {
+    if (loadingDraft || phaseRef.current === 'saving' || discardingRef.current) {
+      if (Platform.OS !== 'web') Alert.alert('Please wait', 'Your route is being updated.');
       return;
     }
     if (blockedNavigationRef.current) return;
     blockedNavigationRef.current = () => navigation.dispatch(data.action);
-    if (Platform.OS === 'web') {
-      if (window.confirm('Discard this unsaved route?')) discard();
-      else blockedNavigationRef.current = null;
-      return;
-    }
-    Alert.alert('Discard walk?', 'This unsaved route will be lost.', [
-      { text: 'Keep route', style: 'cancel', onPress: () => { blockedNavigationRef.current = null; } },
-      { text: 'Discard walk', style: 'destructive', onPress: discard },
-    ], { cancelable: false });
+    confirmDiscard();
   });
 
   useEffect(() => {
@@ -68,148 +61,140 @@ export default function LiveWalkScreen() {
 
   useEffect(() => {
     mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      activeRef.current = false;
-      subscriptionRef.current?.remove();
-      subscriptionRef.current = null;
-    };
+    function update(value: WalkDraft | null) {
+      if (!mountedRef.current) return;
+      setDraft(value);
+      if (phaseRef.current === 'starting' || phaseRef.current === 'saving' || discardingRef.current) return;
+      transition(value ? value.endedAt ? 'saveFailed' : 'tracking' : 'idle');
+      if (value?.endedAt && value.points.length) pendingRef.current = {
+        clientWalkId: value.clientWalkId, startedAt: value.startedAt,
+        endedAt: value.endedAt, points: value.points,
+      };
+    }
+    const unsubscribe = subscribeWalk(update);
+    async function refresh() {
+      try { update(await loadWalkDraft()); }
+      catch { if (mountedRef.current) setError('Could not load the current route. Please reopen this screen.'); }
+      finally { if (mountedRef.current) setLoadingDraft(false); }
+    }
+    void refresh();
+    const appState = AppState.addEventListener('change', (state) => { if (state === 'active') void refresh(); });
+    return () => { mountedRef.current = false; unsubscribe(); appState.remove(); };
   }, []);
 
   useEffect(() => {
-    if (phase !== 'tracking') return;
-    const timer = setInterval(() => {
-      if (startedRef.current) setElapsed(Math.floor((Date.now() - Date.parse(startedRef.current)) / 1000));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [phase]);
-
-  function addLocation(location: Location.LocationObject) {
-    if (!activeRef.current || !Number.isFinite(location.coords.latitude)
-        || !Number.isFinite(location.coords.longitude)) return;
-    const previous = pointsRef.current.at(-1);
-    if (previous && previous.latitude === location.coords.latitude
-        && previous.longitude === location.coords.longitude) return;
-    if (pointsRef.current.length >= 2000) {
-      setError('Route limit reached. Stop and save this walk.');
-      return;
+    function tick() {
+      if (draft) setElapsed(Math.max(0, Math.floor(((draft.endedAt ? Date.parse(draft.endedAt) : Date.now())
+        - Date.parse(draft.startedAt)) / 1000)));
     }
-    const point = { latitude: location.coords.latitude, longitude: location.coords.longitude,
-      recordedAt: new Date().toISOString() };
-    pointsRef.current = [...pointsRef.current, point];
-    setPoints(pointsRef.current);
-  }
+    tick();
+    if (phase !== 'tracking') return;
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [phase, draft]);
 
   async function start() {
-    if (phase !== 'idle' || startInFlightRef.current) return;
-    startInFlightRef.current = true;
+    if (phaseRef.current !== 'idle' || loadingDraft) return;
+    transition('starting');
     const generation = ++startGenerationRef.current;
     setAllowNavigation(false);
-    setElapsed(0);
-    setPoints([]);
-    setPhase('starting');
     setError(null);
-    setConfirmDiscard(false);
+    setElapsed(0);
     try {
-      clientWalkIdRef.current = Crypto.randomUUID();
+      const clientWalkId = Crypto.randomUUID();
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!mountedRef.current || generation !== startGenerationRef.current) return;
       if (permission.status !== 'granted') throw new Error('Allow location access to record a walk.');
+      if (background) {
+        if (!await TaskManager.isAvailableAsync() || !await Location.isBackgroundLocationAvailableAsync()) {
+          throw new Error('Background recording requires an iOS or Android development build.');
+        }
+        if (!mountedRef.current || generation !== startGenerationRef.current) return;
+        const backgroundPermission = await Location.requestBackgroundPermissionsAsync();
+        if (!mountedRef.current || generation !== startGenerationRef.current) return;
+        if (backgroundPermission.status !== 'granted') {
+          throw new Error('Allow background location in Settings, or turn off background recording.');
+        }
+      }
       const startedAt = new Date().toISOString();
       const first = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       if (!mountedRef.current || generation !== startGenerationRef.current) return;
-      startedRef.current = startedAt;
-      pointsRef.current = [];
-      activeRef.current = true;
-      addLocation(first);
-      const subscription = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
-        addLocation,
-        (message) => { if (mountedRef.current && generation === startGenerationRef.current) setError(message); },
-      );
-      if (!mountedRef.current || generation !== startGenerationRef.current || !activeRef.current) {
-        subscription.remove(); return;
-      }
-      subscriptionRef.current = subscription;
-      setPhase('tracking');
+      const active = await startWalkTracking(clientWalkId, startedAt, first, background);
+      if (!mountedRef.current || generation !== startGenerationRef.current) return;
+      setDraft(active);
+      transition('tracking');
     } catch (cause) {
       if (!mountedRef.current || generation !== startGenerationRef.current) return;
-      activeRef.current = false;
-      subscriptionRef.current?.remove();
-      subscriptionRef.current = null;
-      startedRef.current = null;
-      clientWalkIdRef.current = null;
-      pointsRef.current = [];
-      if (mountedRef.current) {
-        setPoints([]);
-        setPhase('idle');
-        setError(cause instanceof Error ? cause.message : 'Could not start location tracking.');
-      }
-    } finally {
-      if (generation === startGenerationRef.current) startInFlightRef.current = false;
+      transition('idle');
+      setError(cause instanceof Error ? cause.message : 'Could not start location tracking.');
     }
   }
 
   async function save(input: WalkInput) {
-    if (savingRef.current) return;
-    savingRef.current = true;
-    setPhase('saving');
+    transition('saving');
     setError(null);
     try {
       const walk = await createWalk(input);
+      await clearSavedWalk(input.clientWalkId);
       if (!mountedRef.current) return;
       pendingRef.current = null;
-      clientWalkIdRef.current = null;
       savedWalkIdRef.current = walk.id;
       setAllowNavigation(true);
     } catch (cause) {
       if (mountedRef.current) {
-        setPhase('saveFailed');
+        transition('saveFailed');
         setError(cause instanceof Error ? cause.message : 'Could not save this walk. Try again.');
       }
-    } finally { savingRef.current = false; }
-  }
-
-  function stop() {
-    if (phase !== 'tracking') return;
-    activeRef.current = false;
-    subscriptionRef.current?.remove();
-    subscriptionRef.current = null;
-    if (!clientWalkIdRef.current || !startedRef.current || pointsRef.current.length === 0) {
-      clientWalkIdRef.current = null;
-      startedRef.current = null;
-      setPhase('idle');
-      setError('No GPS points were recorded. Please try again.');
-      return;
     }
-    const input = { clientWalkId: clientWalkIdRef.current,
-      startedAt: startedRef.current, endedAt: new Date().toISOString(),
-      points: pointsRef.current };
-    pendingRef.current = input;
-    void save(input);
   }
 
-  function discard() {
-    startGenerationRef.current++;
-    startInFlightRef.current = false;
-    activeRef.current = false;
-    subscriptionRef.current?.remove();
-    subscriptionRef.current = null;
-    startedRef.current = null;
-    clientWalkIdRef.current = null;
-    pendingRef.current = null;
-    pointsRef.current = [];
-    setPoints([]);
-    setElapsed(0);
+  async function stop() {
+    if (phaseRef.current !== 'tracking' && phaseRef.current !== 'saveFailed') return;
+    transition('saving');
     setError(null);
-    setConfirmDiscard(false);
-    setPhase('idle');
-    if (blockedNavigationRef.current) setAllowNavigation(true);
+    try {
+      const input = await stopWalkTracking();
+      pendingRef.current = input;
+      await save(input);
+    } catch (cause) {
+      if (mountedRef.current) {
+        transition('saveFailed');
+        setError(cause instanceof Error ? cause.message : 'Could not stop this walk. Try again.');
+      }
+    }
   }
 
-  const minutes = Math.floor(elapsed / 60);
-  const seconds = elapsed % 60;
+  function confirmDiscard() {
+    const keep = () => { blockedNavigationRef.current = null; };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Discard this unsaved route?')) void discard();
+      else keep();
+    } else Alert.alert('Discard walk?', 'This unsaved route will be lost.', [
+      { text: 'Keep route', style: 'cancel', onPress: keep },
+      { text: 'Discard walk', style: 'destructive', onPress: () => void discard() },
+    ], { cancelable: false });
+  }
 
+  async function discard() {
+    if (discardingRef.current || phaseRef.current === 'saving') return;
+    discardingRef.current = true;
+    startGenerationRef.current++;
+    try {
+      await discardWalkDraft();
+      if (!mountedRef.current) return;
+      pendingRef.current = null;
+      setDraft(null);
+      setElapsed(0);
+      setError(null);
+      transition('idle');
+      if (blockedNavigationRef.current) setAllowNavigation(true);
+    } catch {
+      if (mountedRef.current) setError('Could not stop recording. Try discarding again.');
+      blockedNavigationRef.current = null;
+    } finally { discardingRef.current = false; }
+  }
+
+  const points = draft?.points ?? [];
   return <SafeAreaView style={styles.safe}>
     <ScrollView contentContainerStyle={styles.content}>
       <View style={styles.header}>
@@ -220,35 +205,33 @@ export default function LiveWalkScreen() {
       </View>
       <WalkMap points={points} followLatest />
       <View style={styles.card}>
-        <Text style={styles.time}>{String(minutes).padStart(2, '0')}:{String(seconds).padStart(2, '0')}</Text>
+        <Text style={styles.time}>{String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</Text>
         <Text style={styles.meta}>{points.length} GPS points</Text>
-        <Text style={styles.note}>Keep the app open while walking. Background tracking comes later.</Text>
+        <Text style={styles.note}>{draft?.background ? 'Recording continues while your phone is locked.'
+          : 'Foreground recording: keep WagWag open while walking.'}</Text>
       </View>
-      {error && <Text style={styles.error}>{error}</Text>}
-      {phase === 'idle' && <Pressable style={styles.primary} onPress={() => void start()}>
-        <Text style={styles.primaryText}>Start walk</Text>
-      </Pressable>}
-      {phase === 'starting' && <ActivityIndicator style={styles.busy} color={colors.accent} />}
-      {phase === 'tracking' && <Pressable style={styles.primary} onPress={stop}>
+      {(error || draft?.error) && <Text style={styles.error}>{error || draft?.error}</Text>}
+      {phase === 'idle' && !loadingDraft && <>
+        {Platform.OS !== 'web' && <View style={styles.confirmActions}>
+          <Text style={styles.meta}>Record with screen locked</Text>
+          <Switch value={background} onValueChange={setBackground} />
+        </View>}
+        {background && <Text style={styles.note}>Background location is used only during your walk. Android may open Settings to ask for permission.</Text>}
+        <Pressable style={styles.primary} onPress={() => void start()}><Text style={styles.primaryText}>Start walk</Text></Pressable>
+      </>}
+      {(loadingDraft || phase === 'starting') && <ActivityIndicator style={styles.busy} color={colors.accent} />}
+      {phase === 'tracking' && <Pressable style={styles.primary} onPress={() => void stop()}>
         <Text style={styles.primaryText}>Stop and save</Text>
       </Pressable>}
       {phase === 'saving' && <View style={styles.busy}><ActivityIndicator color={colors.accent} />
         <Text style={styles.meta}>Saving your route...</Text></View>}
-      {phase === 'saveFailed' && <Pressable style={styles.primary}
-        onPress={() => { if (pendingRef.current) void save(pendingRef.current); }}>
-        <Text style={styles.primaryText}>Retry save</Text>
-      </Pressable>}
-      {(phase === 'tracking' || phase === 'saveFailed') && !confirmDiscard &&
-        <Pressable style={styles.secondary} onPress={() => setConfirmDiscard(true)}>
-          <Text style={styles.secondaryText}>Discard walk</Text>
-        </Pressable>}
-      {confirmDiscard && <View style={styles.confirm}>
-        <Text style={styles.meta}>Discard this unsaved route?</Text>
-        <View style={styles.confirmActions}>
-          <Pressable onPress={() => setConfirmDiscard(false)}><Text style={styles.secondaryText}>Keep it</Text></Pressable>
-          <Pressable onPress={discard}><Text style={styles.error}>Discard</Text></Pressable>
-        </View>
-      </View>}
+      {phase === 'saveFailed' && <Pressable style={styles.primary} onPress={() => {
+        if (phaseRef.current !== 'saveFailed') return;
+        if (pendingRef.current) void save(pendingRef.current);
+        else void stop();
+      }}><Text style={styles.primaryText}>Retry save</Text></Pressable>}
+      {(phase === 'tracking' || phase === 'saveFailed' || phase === 'starting') && !loadingDraft &&
+        <Pressable style={styles.secondary} onPress={confirmDiscard}><Text style={styles.secondaryText}>Discard walk</Text></Pressable>}
     </ScrollView>
   </SafeAreaView>;
 }
@@ -269,6 +252,5 @@ const styles = StyleSheet.create({
   secondary: { padding: 16, alignItems: 'center' },
   secondaryText: { color: colors.green, fontWeight: '800' },
   busy: { marginTop: 26, alignItems: 'center' },
-  confirm: { backgroundColor: colors.card, borderRadius: 14, padding: 18, marginTop: 10 },
   confirmActions: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 20 },
 });

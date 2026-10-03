@@ -40,3 +40,6 @@ jobs:
       - name: Typecheck mobile
         working-directory: mobile
         run: npm run typecheck
+      - name: Test route filtering
+        working-directory: mobile
+        run: npm test

@@ -73,6 +73,9 @@ export default function WalksScreen() {
         <Pressable style={styles.start} onPress={() => router.push('/walk/live')}>
           <Ionicons name="walk" size={21} color="white" /><Text style={styles.startText}>Start a walk</Text>
         </Pressable>
+        <Pressable style={styles.footer} onPress={() => router.push('/walk/nearby')}>
+          <Text style={styles.date}>My routes near me</Text>
+        </Pressable>
         <Text style={styles.section}>Past walks</Text>
         {error && <Pressable onPress={() => void loadFirst()}><Text style={styles.error}>{error}  Try again</Text></Pressable>}
       </>}
@@ -81,7 +84,7 @@ export default function WalksScreen() {
         <View style={styles.cardIcon}><Ionicons name="footsteps" size={20} color={colors.green} /></View>
         <View style={styles.cardText}>
           <Text style={styles.date}>{new Date(item.startedAt).toLocaleString()}</Text>
-          <Text style={styles.meta}>{item.pointCount} GPS points</Text>
+          <Text style={styles.meta}>{(item.distanceMeters / 1000).toFixed(2)} km | {item.pointCount} GPS points</Text>
         </View>
         <Ionicons name="chevron-forward" size={18} color={colors.muted} />
       </Pressable>}

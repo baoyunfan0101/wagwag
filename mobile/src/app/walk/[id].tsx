@@ -34,11 +34,12 @@ export default function WalkDetailScreen() {
       </View>
       {loading ? <ActivityIndicator color={colors.accent} /> : error ?
         <Text style={styles.error}>{error}</Text> : walk ? <>
-          <WalkMap points={walk.points} />
+          <WalkMap points={walk.points} route={walk.route} />
           <View style={styles.card}>
             <Text style={styles.date}>{new Date(walk.startedAt).toLocaleString()}</Text>
             <Text style={styles.meta}>Ended {new Date(walk.endedAt).toLocaleTimeString()}</Text>
             <Text style={styles.meta}>{walk.points.length} GPS points saved</Text>
+            <Text style={styles.meta}>{(walk.distanceMeters / 1000).toFixed(2)} km walked</Text>
           </View>
         </> : null}
     </ScrollView>
