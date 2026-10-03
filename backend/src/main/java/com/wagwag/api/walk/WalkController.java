@@ -1,6 +1,7 @@
 package com.wagwag.api.walk;
 
 import com.wagwag.api.walk.WalkService.WalkPage;
+import com.wagwag.api.walk.WalkService.CreateResult;
 import com.wagwag.api.walk.WalkService.WalkResponse;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -22,8 +23,10 @@ public class WalkController {
 
     @PostMapping
     public ResponseEntity<WalkResponse> create(@Valid @RequestBody WalkInput input) {
-        WalkResponse walk = walks.create(input);
-        return ResponseEntity.created(URI.create("/api/walks/" + walk.id())).body(walk);
+        CreateResult result = walks.create(input);
+        return result.created()
+            ? ResponseEntity.created(URI.create("/api/walks/" + result.walk().id())).body(result.walk())
+            : ResponseEntity.ok(result.walk());
     }
 
     @GetMapping

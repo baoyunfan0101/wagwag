@@ -1,8 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Crypto from 'expo-crypto';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import WalkMap from '@/components/WalkMap';
 import { createWalk, type WalkInput, type WalkPoint } from '@/lib/api';
@@ -12,18 +14,57 @@ type Phase = 'idle' | 'starting' | 'tracking' | 'saving' | 'saveFailed';
 
 export default function LiveWalkScreen() {
   const router = useRouter();
+  const navigation = useNavigation();
   const [phase, setPhase] = useState<Phase>('idle');
+  const [allowNavigation, setAllowNavigation] = useState(false);
   const [points, setPoints] = useState<WalkPoint[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const pointsRef = useRef<WalkPoint[]>([]);
+  const clientWalkIdRef = useRef<string | null>(null);
   const startedRef = useRef<string | null>(null);
   const pendingRef = useRef<WalkInput | null>(null);
+  const blockedNavigationRef = useRef<(() => void) | null>(null);
+  const savedWalkIdRef = useRef<number | null>(null);
+  const startGenerationRef = useRef(0);
+  const startInFlightRef = useRef(false);
   const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const activeRef = useRef(false);
   const mountedRef = useRef(true);
   const savingRef = useRef(false);
+
+  usePreventRemove(phase !== 'idle' && !allowNavigation, ({ data }) => {
+    if (phase === 'saving') {
+      if (Platform.OS !== 'web') Alert.alert('Saving walk', 'Please wait for the save to finish.');
+      return;
+    }
+    if (blockedNavigationRef.current) return;
+    blockedNavigationRef.current = () => navigation.dispatch(data.action);
+    if (Platform.OS === 'web') {
+      if (window.confirm('Discard this unsaved route?')) discard();
+      else blockedNavigationRef.current = null;
+      return;
+    }
+    Alert.alert('Discard walk?', 'This unsaved route will be lost.', [
+      { text: 'Keep route', style: 'cancel', onPress: () => { blockedNavigationRef.current = null; } },
+      { text: 'Discard walk', style: 'destructive', onPress: discard },
+    ], { cancelable: false });
+  });
+
+  useEffect(() => {
+    if (!allowNavigation) return;
+    // Replay a blocked action only after the removal guard has been disabled.
+    if (savedWalkIdRef.current !== null) {
+      const id = savedWalkIdRef.current;
+      savedWalkIdRef.current = null;
+      router.replace({ pathname: '/walk/[id]', params: { id: String(id) } });
+    } else if (blockedNavigationRef.current) {
+      const continueNavigation = blockedNavigationRef.current;
+      blockedNavigationRef.current = null;
+      continueNavigation();
+    }
+  }, [allowNavigation, router]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -60,16 +101,23 @@ export default function LiveWalkScreen() {
   }
 
   async function start() {
-    if (phase !== 'idle') return;
+    if (phase !== 'idle' || startInFlightRef.current) return;
+    startInFlightRef.current = true;
+    const generation = ++startGenerationRef.current;
+    setAllowNavigation(false);
+    setElapsed(0);
+    setPoints([]);
     setPhase('starting');
     setError(null);
     setConfirmDiscard(false);
     try {
+      clientWalkIdRef.current = Crypto.randomUUID();
       const permission = await Location.requestForegroundPermissionsAsync();
+      if (!mountedRef.current || generation !== startGenerationRef.current) return;
       if (permission.status !== 'granted') throw new Error('Allow location access to record a walk.');
       const startedAt = new Date().toISOString();
       const first = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || generation !== startGenerationRef.current) return;
       startedRef.current = startedAt;
       pointsRef.current = [];
       activeRef.current = true;
@@ -77,22 +125,28 @@ export default function LiveWalkScreen() {
       const subscription = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3000 },
         addLocation,
-        (message) => setError(message),
+        (message) => { if (mountedRef.current && generation === startGenerationRef.current) setError(message); },
       );
-      if (!mountedRef.current || !activeRef.current) { subscription.remove(); return; }
+      if (!mountedRef.current || generation !== startGenerationRef.current || !activeRef.current) {
+        subscription.remove(); return;
+      }
       subscriptionRef.current = subscription;
       setPhase('tracking');
     } catch (cause) {
+      if (!mountedRef.current || generation !== startGenerationRef.current) return;
       activeRef.current = false;
       subscriptionRef.current?.remove();
       subscriptionRef.current = null;
       startedRef.current = null;
+      clientWalkIdRef.current = null;
       pointsRef.current = [];
       if (mountedRef.current) {
         setPoints([]);
         setPhase('idle');
         setError(cause instanceof Error ? cause.message : 'Could not start location tracking.');
       }
+    } finally {
+      if (generation === startGenerationRef.current) startInFlightRef.current = false;
     }
   }
 
@@ -103,8 +157,11 @@ export default function LiveWalkScreen() {
     setError(null);
     try {
       const walk = await createWalk(input);
+      if (!mountedRef.current) return;
       pendingRef.current = null;
-      router.replace({ pathname: '/walk/[id]', params: { id: String(walk.id) } });
+      clientWalkIdRef.current = null;
+      savedWalkIdRef.current = walk.id;
+      setAllowNavigation(true);
     } catch (cause) {
       if (mountedRef.current) {
         setPhase('saveFailed');
@@ -118,22 +175,28 @@ export default function LiveWalkScreen() {
     activeRef.current = false;
     subscriptionRef.current?.remove();
     subscriptionRef.current = null;
-    if (!startedRef.current || pointsRef.current.length === 0) {
+    if (!clientWalkIdRef.current || !startedRef.current || pointsRef.current.length === 0) {
+      clientWalkIdRef.current = null;
+      startedRef.current = null;
       setPhase('idle');
       setError('No GPS points were recorded. Please try again.');
       return;
     }
-    const input = { startedAt: startedRef.current, endedAt: new Date().toISOString(),
+    const input = { clientWalkId: clientWalkIdRef.current,
+      startedAt: startedRef.current, endedAt: new Date().toISOString(),
       points: pointsRef.current };
     pendingRef.current = input;
     void save(input);
   }
 
   function discard() {
+    startGenerationRef.current++;
+    startInFlightRef.current = false;
     activeRef.current = false;
     subscriptionRef.current?.remove();
     subscriptionRef.current = null;
     startedRef.current = null;
+    clientWalkIdRef.current = null;
     pendingRef.current = null;
     pointsRef.current = [];
     setPoints([]);
@@ -141,6 +204,7 @@ export default function LiveWalkScreen() {
     setError(null);
     setConfirmDiscard(false);
     setPhase('idle');
+    if (blockedNavigationRef.current) setAllowNavigation(true);
   }
 
   const minutes = Math.floor(elapsed / 60);
@@ -149,8 +213,8 @@ export default function LiveWalkScreen() {
   return <SafeAreaView style={styles.safe}>
     <ScrollView contentContainerStyle={styles.content}>
       <View style={styles.header}>
-        <Pressable onPress={() => { if (phase === 'idle') router.back(); }} accessibilityLabel="Go back">
-          <Ionicons name="arrow-back" size={24} color={phase === 'idle' ? colors.ink : colors.muted} />
+        <Pressable onPress={() => router.back()} accessibilityLabel="Go back">
+          <Ionicons name="arrow-back" size={24} color={colors.ink} />
         </Pressable>
         <Text style={styles.title}>Walk tracker</Text><View style={{ width: 24 }} />
       </View>

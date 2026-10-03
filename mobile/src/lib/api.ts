@@ -76,7 +76,7 @@ export type WalkPoint = { latitude: number; longitude: number; recordedAt: strin
 export type Walk = { id: number; petId: number; startedAt: string; endedAt: string; points: WalkPoint[] };
 export type WalkSummary = { id: number; petId: number; startedAt: string; endedAt: string; pointCount: number };
 export type WalkPage = { items: WalkSummary[]; nextPage: number | null };
-export type WalkInput = { startedAt: string; endedAt: string; points: WalkPoint[] };
+export type WalkInput = { clientWalkId: string; startedAt: string; endedAt: string; points: WalkPoint[] };
 export type Comment = {
   id: number;
   postId: number;
