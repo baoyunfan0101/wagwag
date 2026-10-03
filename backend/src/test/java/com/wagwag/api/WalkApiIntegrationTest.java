@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -28,6 +29,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -41,18 +43,28 @@ class WalkApiIntegrationTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
         DockerImageName.parse("postgis/postgis:17-3.5").asCompatibleSubstituteFor("postgres"));
 
+    @Container
+    static final GenericContainer<?> redis = new GenericContainer<>("redis:7.4-alpine")
+        .withExposedPorts(6379);
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+        registry.add("spring.data.redis.url", () -> "redis://" + redis.getHost() + ":" + redis.getMappedPort(6379));
     }
 
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
+    @Autowired StringRedisTemplate cache;
 
     @BeforeEach
-    void clean() { jdbc.update("DELETE FROM walks"); }
+    void clean() {
+        jdbc.update("DELETE FROM walks");
+        jdbc.update("DELETE FROM pet_blocks");
+        cache.delete("wagwag:territory:leaderboard");
+    }
 
     @Test
     void completedWalkPersistsOrderedRouteAndHistory() throws Exception {
@@ -363,6 +375,113 @@ class WalkApiIntegrationTest {
             go.countDown();
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void strongerRivalOwnsOverlapWhileOriginalClaimRemainsInHistory() throws Exception {
+        long ownWalk = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        mvc.perform(post("/api/walks/{id}/territory", ownWalk)).andExpect(status().isCreated());
+        insertRivalTerritory("LINESTRING(-95.3698 29.7604,-95.368 29.761)", 5, 0);
+
+        mvc.perform(get("/api/walks/{id}/territory", ownWalk))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.area.type").value("Polygon"))
+            .andExpect(jsonPath("$.ownedArea.type").value("MultiPolygon"))
+            .andExpect(jsonPath("$.ownedAreaSquareMeters").value(0.0))
+            .andExpect(jsonPath("$.contestedAreaSquareMeters")
+                .value(org.hamcrest.Matchers.greaterThan(1000.0)));
+        mvc.perform(get("/api/territories/history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].walkId").value(ownWalk))
+            .andExpect(jsonPath("$.items[0].ownedAreaSquareMeters").value(0.0));
+        mvc.perform(get("/api/territories/leaderboard"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].petId").value(1000))
+            .andExpect(jsonPath("$[0].areaSquareMeters")
+                .value(org.hamcrest.Matchers.greaterThan(1000.0)));
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1000, 1)");
+        mvc.perform(get("/api/territories/leaderboard"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void partialOverlapIsExcludedFromWeakerClaimArea() throws Exception {
+        long ownWalk = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        mvc.perform(post("/api/walks/{id}/territory", ownWalk)).andExpect(status().isCreated());
+        insertRivalTerritory("LINESTRING(-95.3698 29.7606,-95.368 29.7612)", 5, 0);
+        String body = mvc.perform(get("/api/walks/{id}/territory", ownWalk))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        double claimed = JsonPath.read(body, "$.areaSquareMeters");
+        double owned = JsonPath.read(body, "$.ownedAreaSquareMeters");
+        assertThat(owned).isGreaterThan(0).isLessThan(claimed);
+    }
+
+    @Test
+    void weeklyDecayLetsFreshClaimBeatOldStrongerClaim() throws Exception {
+        insertRivalTerritory("LINESTRING(-95.3698 29.7604,-95.368 29.761)", 5, 35);
+        long ownWalk = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        mvc.perform(post("/api/walks/{id}/territory", ownWalk)).andExpect(status().isCreated());
+        String body = mvc.perform(get("/api/walks/{id}/territory", ownWalk))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.effectiveStrength").value(1))
+            .andReturn().getResponse().getContentAsString();
+        double claimed = JsonPath.read(body, "$.areaSquareMeters");
+        double owned = JsonPath.read(body, "$.ownedAreaSquareMeters");
+        assertThat(owned).isCloseTo(claimed, org.assertj.core.data.Offset.offset(0.01));
+        mvc.perform(get("/api/territories/leaderboard"))
+            .andExpect(jsonPath("$[0].petId").value(1));
+    }
+
+    @Test
+    void leaderboardCacheInvalidatesAfterClaimAndHistoryPaginates() throws Exception {
+        mvc.perform(get("/api/territories/leaderboard"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0));
+        long first = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        mvc.perform(post("/api/walks/{id}/territory", first)).andExpect(status().isCreated());
+        mvc.perform(get("/api/territories/leaderboard"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$[0].petId").value(1));
+        long second = createWalk("2026-01-02T10:00:00Z", "2026-01-02T10:05:00Z");
+        mvc.perform(post("/api/walks/{id}/territory", second)).andExpect(status().isCreated());
+        String leaderboard = mvc.perform(get("/api/territories/leaderboard"))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String secondClaim = mvc.perform(get("/api/walks/{id}/territory", second))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.<Double>read(leaderboard, "$[0].areaSquareMeters"))
+            .isCloseTo(JsonPath.read(secondClaim, "$.areaSquareMeters"),
+                org.assertj.core.data.Offset.offset(0.01));
+        mvc.perform(get("/api/territories/history").param("limit", "1"))
+            .andExpect(jsonPath("$.items[0].walkId").value(second))
+            .andExpect(jsonPath("$.nextPage").value(1));
+        mvc.perform(get("/api/territories/history").param("limit", "1").param("page", "1"))
+            .andExpect(jsonPath("$.items[0].walkId").value(first))
+            .andExpect(jsonPath("$.nextPage").value((Object) null));
+        mvc.perform(get("/api/territories/history").param("limit", "0"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/territories/leaderboard").param("limit", "51"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void longPlausibleWalkCapsClaimStrengthAtFive() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7604, -95.3568, "2026-01-01T10:05:00Z"));
+        long walkId = walkId(submit(body));
+        mvc.perform(post("/api/walks/{id}/territory", walkId))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.baseStrength").value(5))
+            .andExpect(jsonPath("$.effectiveStrength").value(5));
+    }
+
+    private long insertRivalTerritory(String route, int strength, int ageDays) {
+        long walkId = jdbc.queryForObject("INSERT INTO walks (pet_id, client_walk_id, started_at, ended_at, route) "
+            + "VALUES (1000, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ST_GeomFromText(?, 4326)) RETURNING id",
+            Long.class, UUID.randomUUID(), route);
+        jdbc.update("INSERT INTO territories (walk_id, area, base_strength, created_at) "
+            + "SELECT id, ST_Buffer(route::geography, 20)::geometry, ?, CURRENT_TIMESTAMP - (? * INTERVAL '1 day') "
+            + "FROM walks WHERE id = ?", strength, ageDays, walkId);
+        return walkId;
     }
 
     private long createWalk(String startedAt, String endedAt) throws Exception {
