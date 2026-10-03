@@ -83,8 +83,14 @@ export type NearbyWalk = { walk: WalkSummary; proximityMeters: number };
 export type NearbyWalkPage = { items: NearbyWalk[]; nextPage: number | null };
 export type WalkInput = { clientWalkId: string; startedAt: string; endedAt: string; points: WalkPoint[] };
 export type TerritoryArea = { type: 'Polygon'; coordinates: [number, number][][] };
+export type OwnedTerritoryArea = { type: 'MultiPolygon'; coordinates: [number, number][][][] };
 export type Territory = { id: number; walkId: number; petId: number; createdAt: string;
-  areaSquareMeters: number; area: TerritoryArea };
+  areaSquareMeters: number; ownedAreaSquareMeters: number; contestedAreaSquareMeters: number;
+  baseStrength: number; effectiveStrength: number; area: TerritoryArea; ownedArea: OwnedTerritoryArea };
+export type TerritorySummary = { id: number; walkId: number; createdAt: string;
+  baseStrength: number; effectiveStrength: number; areaSquareMeters: number; ownedAreaSquareMeters: number };
+export type TerritoryPage = { items: TerritorySummary[]; nextPage: number | null };
+export type TerritoryLeader = { petId: number; petName: string; areaSquareMeters: number; claimCount: number };
 export type Comment = {
   id: number;
   postId: number;
@@ -256,6 +262,14 @@ export function getWalkTerritory(walkId: number): Promise<Territory> {
 
 export function claimWalkTerritory(walkId: number): Promise<Territory> {
   return request<Territory>(`/api/walks/${walkId}/territory`, { method: 'POST' });
+}
+
+export function getTerritoryHistory(limit = 20, page = 0): Promise<TerritoryPage> {
+  return request<TerritoryPage>(`/api/territories/history?limit=${limit}&page=${page}`);
+}
+
+export function getTerritoryLeaderboard(limit = 20): Promise<TerritoryLeader[]> {
+  return request<TerritoryLeader[]>(`/api/territories/leaderboard?limit=${limit}`);
 }
 
 export function getWalks(limit = 20, page = 0): Promise<WalkPage> {

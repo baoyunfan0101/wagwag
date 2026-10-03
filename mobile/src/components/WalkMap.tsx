@@ -1,8 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
-import type { TerritoryArea, WalkPoint, WalkRoute } from '@/lib/api';
+import type { OwnedTerritoryArea, WalkPoint, WalkRoute } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
-export type WalkMapProps = { points: WalkPoint[]; route?: WalkRoute; territory?: TerritoryArea;
+export type WalkMapProps = { points: WalkPoint[]; route?: WalkRoute; territory?: OwnedTerritoryArea;
   followLatest?: boolean };
 
 export default function WalkMap({ points, territory }: WalkMapProps) {
