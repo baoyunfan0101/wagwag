@@ -41,7 +41,7 @@ export type FollowStatus = {
   mutedByMe: boolean;
 };
 
-export type PostInput = { body: string | null; imageKeys: string[] };
+export type PostInput = { body: string | null; imageKeys: string[]; communityId?: number };
 export type Post = {
   body: string | null;
   imageUrls: string[];
@@ -49,12 +49,26 @@ export type Post = {
   petId: number;
   petName: string;
   petAvatarUrl: string | null;
+  communityId: number | null;
+  communityName: string | null;
   createdAt: string;
   likeCount: number;
   commentCount: number;
   likedByMe: boolean;
 };
 export type FeedPage = { items: Post[]; nextCursor: string | null };
+export type Community = {
+  id: number;
+  name: string;
+  description: string | null;
+  createdByPetId: number;
+  createdAt: string;
+  memberCount: number;
+  joinedByMe: boolean;
+};
+export type CommunityPage = { items: Community[]; nextPage: number | null };
+export type CommunityMember = { id: number; name: string; species: string; avatarUrl: string | null };
+export type CommunityMemberPage = { items: CommunityMember[]; nextPage: number | null };
 export type Comment = {
   id: number;
   postId: number;
@@ -154,6 +168,37 @@ export function unmutePet(id: number): Promise<FollowStatus> {
 export function getFeed(limit = 20, cursor?: string, following = false): Promise<FeedPage> {
   const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${following ? '&following=true' : ''}`;
   return request<FeedPage>(`/api/feed?${query}`);
+}
+
+export function getCommunities(query = '', limit = 20, page = 0): Promise<CommunityPage> {
+  return request<CommunityPage>(`/api/communities?query=${encodeURIComponent(query)}&limit=${limit}&page=${page}`);
+}
+
+export function createCommunity(name: string, description: string): Promise<Community> {
+  return request<Community>('/api/communities', {
+    method: 'POST', body: JSON.stringify({ name, description: description.trim() || null }),
+  });
+}
+
+export function getCommunity(id: number): Promise<Community> {
+  return request<Community>(`/api/communities/${id}`);
+}
+
+export function joinCommunity(id: number): Promise<Community> {
+  return request<Community>(`/api/communities/${id}/members`, { method: 'POST' });
+}
+
+export function leaveCommunity(id: number): Promise<Community> {
+  return request<Community>(`/api/communities/${id}/members`, { method: 'DELETE' });
+}
+
+export function getCommunityMembers(id: number, limit = 20, page = 0): Promise<CommunityMemberPage> {
+  return request<CommunityMemberPage>(`/api/communities/${id}/members?limit=${limit}&page=${page}`);
+}
+
+export function getCommunityFeed(id: number, limit = 20, cursor?: string): Promise<FeedPage> {
+  const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+  return request<FeedPage>(`/api/communities/${id}/feed?${query}`);
 }
 
 export function getPost(id: number): Promise<Post> {

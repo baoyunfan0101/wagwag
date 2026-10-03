@@ -7,11 +7,12 @@ type Props = {
   post: Post;
   onOpen?: () => void;
   onPet?: () => void;
+  onCommunity?: () => void;
   onLike: () => void;
   likeBusy?: boolean;
 };
 
-export function PostCard({ post, onOpen, onPet, onLike, likeBusy = false }: Props) {
+export function PostCard({ post, onOpen, onPet, onCommunity, onLike, likeBusy = false }: Props) {
   const images = post.imageUrls;
   const content = <>
     <View style={styles.header}>
@@ -23,6 +24,7 @@ export function PostCard({ post, onOpen, onPet, onLike, likeBusy = false }: Prop
       </View>
       {onOpen && <Ionicons name="chevron-forward" size={20} color={colors.muted} />}
     </View>
+    {post.communityName && <Text style={styles.community}>In {post.communityName}</Text>}
     {post.body && <Text style={styles.body}>{post.body}</Text>}
     {images.length === 1 && <Image source={{ uri: images[0] }} style={styles.image} resizeMode="cover" />}
     {images.length > 1 && <View style={styles.imageGrid}>
@@ -52,6 +54,10 @@ export function PostCard({ post, onOpen, onPet, onLike, likeBusy = false }: Prop
         <Ionicons name="paw-outline" size={19} color={colors.muted} />
         <Text style={styles.actionText}>Pet</Text>
       </Pressable>}
+      {onCommunity && <Pressable style={styles.action} onPress={onCommunity} accessibilityLabel="View community">
+        <Ionicons name="people-outline" size={19} color={colors.muted} />
+        <Text style={styles.actionText}>Community</Text>
+      </Pressable>}
     </View>
   </View>;
 }
@@ -64,11 +70,12 @@ const styles = StyleSheet.create({
   author: { flex: 1 },
   name: { color: colors.ink, fontSize: 15, fontWeight: '800' },
   date: { color: colors.muted, fontSize: 11, marginTop: 3 },
+  community: { color: colors.green, fontSize: 12, fontWeight: '800', marginTop: 13 },
   body: { color: colors.ink, fontSize: 15, lineHeight: 23, marginTop: 16, marginBottom: 12 },
   image: { width: '100%', height: 260, borderRadius: 15, marginTop: 12, backgroundColor: colors.greenPale },
   imageGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   gridImage: { width: '48%', height: 155, borderRadius: 12, backgroundColor: colors.greenPale },
-  actions: { flexDirection: 'row', gap: 26, borderTopColor: colors.line, borderTopWidth: 1, marginTop: 17, paddingTop: 14 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 18, borderTopColor: colors.line, borderTopWidth: 1, marginTop: 17, paddingTop: 14 },
   action: { flexDirection: 'row', alignItems: 'center', gap: 7, minWidth: 45 },
   actionText: { color: colors.muted, fontSize: 14, fontWeight: '700' },
   liked: { color: colors.accent },

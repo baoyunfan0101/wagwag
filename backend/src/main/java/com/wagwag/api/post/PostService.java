@@ -2,6 +2,8 @@ package com.wagwag.api.post;
 
 import com.wagwag.api.pet.Pet;
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.community.CommunityService;
+import com.wagwag.api.community.CommunityService.CommunityLabel;
 import com.wagwag.api.social.PetFollowRepository;
 import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.storage.PostImageStorage;
@@ -31,12 +33,14 @@ public class PostService {
     private final PetRepository pets;
     private final PetFollowRepository follows;
     private final SocialRestrictions restrictions;
+    private final CommunityService communities;
     private final PostImageStorage storage;
     private final long devPetId;
 
     public PostService(PostRepository posts, PostMediaRepository media, PostLikeRepository likes,
                        CommentRepository comments, PetRepository pets, PostImageStorage storage,
                        PetFollowRepository follows, SocialRestrictions restrictions,
+                       CommunityService communities,
                        @Value("${app.dev-pet-id:0}") long devPetId) {
         this.posts = posts;
         this.media = media;
@@ -46,6 +50,7 @@ public class PostService {
         this.storage = storage;
         this.follows = follows;
         this.restrictions = restrictions;
+        this.communities = communities;
         this.devPetId = devPetId;
     }
 
@@ -62,10 +67,12 @@ public class PostService {
         }
 
         Pet pet = actor();
+        if (input.communityId() != null) communities.requireMember(input.communityId(), pet.getId());
         List<String> urls = new ArrayList<>();
         for (String key : keys) urls.add(storage.verifyAndGetUrl(pet.getId(), key));
 
         Post post = posts.saveAndFlush(new Post(pet, body));
+        if (input.communityId() != null) communities.attach(post.getId(), input.communityId());
         for (int index = 0; index < urls.size(); index++) {
             media.save(new PostMedia(post, urls.get(index), index));
         }
@@ -83,6 +90,16 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public FeedPage feed(int limit, String cursor, boolean following) {
+        return page(limit, cursor, following, null);
+    }
+
+    @Transactional(readOnly = true)
+    public FeedPage communityFeed(long communityId, int limit, String cursor) {
+        communities.detail(communityId);
+        return page(limit, cursor, false, communityId);
+    }
+
+    private FeedPage page(int limit, String cursor, boolean following, Long communityId) {
         if (limit < 1 || limit > 50) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Feed limit must be between 1 and 50");
         }
@@ -92,7 +109,11 @@ public class PostService {
         List<Long> hidden = restrictions.hiddenFeedPetIds(actorId);
         if (hidden.isEmpty()) hidden = List.of(0L);
         List<Post> rows;
-        if (following) {
+        if (communityId != null) {
+            rows = after == null ? posts.findCommunityFeed(communityId, actorId, hidden, page)
+                : posts.findCommunityFeedAfter(communityId, actorId, hidden,
+                    after.createdAt(), after.id(), page);
+        } else if (following) {
             rows = after == null ? posts.findFollowingFeed(actorId, hidden, page)
                 : posts.findFollowingFeedAfter(actorId, hidden, after.createdAt(), after.id(), page);
         } else {
@@ -111,12 +132,15 @@ public class PostService {
         }
         Map<Long, Long> likeCounts = counts(likes.countByPostIds(ids));
         Map<Long, Long> commentCounts = counts(comments.countByPostIds(ids));
+        Map<Long, CommunityLabel> labels = communities.labels(ids);
         Set<Long> likedIds = devPetId > 0 ? new HashSet<>(likes.likedPostIds(ids, devPetId)) : Set.of();
         List<PostResponse> items = selected.stream().map(post -> {
             Pet pet = post.getPet();
             Long id = post.getId();
             List<String> urls = imageUrls.getOrDefault(id, List.of());
+            CommunityLabel label = labels.get(id);
             return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
+                label == null ? null : label.id(), label == null ? null : label.name(),
                 post.getBody(), urls, post.getCreatedAt(),
                 likeCounts.getOrDefault(id, 0L), commentCounts.getOrDefault(id, 0L), likedIds.contains(id));
         }).toList();
@@ -159,7 +183,9 @@ public class PostService {
         Pet pet = post.getPet();
         List<String> urls = media.findByPost_IdOrderBySortOrderAsc(id).stream()
             .map(PostMedia::getUrl).toList();
+        CommunityLabel label = communities.labels(List.of(id)).get(id);
         return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
+            label == null ? null : label.id(), label == null ? null : label.name(),
             post.getBody(), urls, post.getCreatedAt(), likes.countByPost_Id(id),
             comments.countByPost_Id(id),
             devPetId > 0 && likes.existsByPost_IdAndPet_Id(id, devPetId));

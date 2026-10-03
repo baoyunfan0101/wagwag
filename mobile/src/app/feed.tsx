@@ -120,6 +120,8 @@ export default function FeedScreen() {
       renderItem={({ item }) => <PostCard post={item}
         onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
         onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.petId) } })}
+        onCommunity={item.communityId ? () => router.push({ pathname: '/community/[id]',
+          params: { id: String(item.communityId) } }) : undefined}
         onLike={() => void toggleLike(item)} likeBusy={busyLikeId === item.id} />}
       ListHeaderComponent={<>
         <View style={styles.header}>
