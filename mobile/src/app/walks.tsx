@@ -76,6 +76,9 @@ export default function WalksScreen() {
         <Pressable style={styles.footer} onPress={() => router.push('/walk/nearby')}>
           <Text style={styles.date}>My routes near me</Text>
         </Pressable>
+        <Pressable style={styles.footer} onPress={() => router.push('/territories')}>
+          <Text style={styles.date}>Territories and leaderboard</Text>
+        </Pressable>
         <Text style={styles.section}>Past walks</Text>
         {error && <Pressable onPress={() => void loadFirst()}><Text style={styles.error}>{error}  Try again</Text></Pressable>}
       </>}

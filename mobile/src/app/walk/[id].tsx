@@ -79,13 +79,19 @@ export default function WalkDetailScreen() {
       </View>
       {loading ? <ActivityIndicator color={colors.accent} /> : error ?
         <Text style={styles.error}>{error}</Text> : walk ? <>
-          <WalkMap points={walk.points} route={walk.route} territory={territory?.area} />
+          <WalkMap points={walk.points} route={walk.route} territory={territory?.ownedArea} />
           <View style={styles.card}>
             <Text style={styles.date}>{new Date(walk.startedAt).toLocaleString()}</Text>
             <Text style={styles.meta}>Ended {new Date(walk.endedAt).toLocaleTimeString()}</Text>
             <Text style={styles.meta}>{walk.points.length} GPS points saved</Text>
             <Text style={styles.meta}>{(walk.distanceMeters / 1000).toFixed(2)} km walked</Text>
-            {territory && <Text style={styles.meta}>Territory claimed: {Math.round(territory.areaSquareMeters)} sq m</Text>}
+            {territory && <>
+              <Text style={styles.meta}>Claimed: {Math.round(territory.areaSquareMeters)} sq m</Text>
+              <Text style={styles.meta}>Currently controlled: {Math.round(territory.ownedAreaSquareMeters)} sq m</Text>
+              <Text style={styles.meta}>Strength: {territory.effectiveStrength} / {territory.baseStrength}</Text>
+              {territory.contestedAreaSquareMeters > 1 &&
+                <Text style={styles.meta}>Contested: {Math.round(territory.contestedAreaSquareMeters)} sq m</Text>}
+            </>}
           </View>
           {territoryLoading ? <ActivityIndicator style={styles.action} color={colors.accent} /> :
             territoryError ? <>

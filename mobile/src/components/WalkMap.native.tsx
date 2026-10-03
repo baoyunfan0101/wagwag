@@ -15,7 +15,7 @@ export default function WalkMap({ points, route, territory, followLatest = false
 
   const coordinates: [number, number][] = route?.coordinates ?? points.map((point) => [point.longitude, point.latitude]);
   const latest: [number, number] = coordinates.at(-1) ?? [-95.3698, 29.7604];
-  const visibleCoordinates = [...coordinates, ...(territory?.coordinates.flat() ?? [])];
+  const visibleCoordinates = [...coordinates, ...(territory?.coordinates.flat(2) ?? [])];
   const longitudes = visibleCoordinates.map((point) => point[0]);
   const latitudes = visibleCoordinates.map((point) => point[1]);
   const hasBounds = !followLatest && visibleCoordinates.length > 1 &&
@@ -30,7 +30,7 @@ export default function WalkMap({ points, route, territory, followLatest = false
       <Camera centerCoordinate={bounds ? undefined : latest} bounds={bounds}
         padding={bounds ? { paddingTop: 24, paddingBottom: 24, paddingLeft: 24, paddingRight: 24 } : undefined}
         zoomLevel={bounds ? undefined : 14} animationDuration={followLatest ? 500 : 0} />
-      {territory && <ShapeSource id="walk-territory" shape={territory}>
+      {territory && territory.coordinates.length > 0 && <ShapeSource id="walk-territory" shape={territory}>
         <FillLayer id="walk-territory-fill" style={{ fillColor: colors.green, fillOpacity: 0.25 }} />
         <LineLayer id="walk-territory-border" style={{ lineColor: colors.green, lineWidth: 2 }} />
       </ShapeSource>}
