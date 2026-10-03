@@ -37,7 +37,13 @@
           "imageWidth": 76
         }
       ],
-      ["expo-location", { "locationWhenInUsePermission": "WagWag needs your location to record a walk." }],
+      ["expo-location", {
+        "locationWhenInUsePermission": "WagWag needs your location to record a walk.",
+        "locationAlwaysAndWhenInUsePermission": "Allow WagWag to record your walk while the screen is locked.",
+        "isIosBackgroundLocationEnabled": true,
+        "isAndroidBackgroundLocationEnabled": true,
+        "isAndroidForegroundServiceEnabled": true
+      }],
       "@rnmapbox/maps"
     ],
     "experiments": {

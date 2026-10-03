@@ -73,9 +73,14 @@ export type CommunityMember = { id: number; name: string; species: string; avata
   role: 'OWNER' | 'MODERATOR' | 'MEMBER' };
 export type CommunityMemberPage = { items: CommunityMember[]; nextPage: number | null };
 export type WalkPoint = { latitude: number; longitude: number; recordedAt: string };
-export type Walk = { id: number; petId: number; startedAt: string; endedAt: string; points: WalkPoint[] };
-export type WalkSummary = { id: number; petId: number; startedAt: string; endedAt: string; pointCount: number };
+export type WalkRoute = { type: 'LineString'; coordinates: [number, number][] };
+export type Walk = { id: number; petId: number; startedAt: string; endedAt: string; points: WalkPoint[];
+  distanceMeters: number; route: WalkRoute };
+export type WalkSummary = { id: number; petId: number; startedAt: string; endedAt: string; pointCount: number;
+  distanceMeters: number };
 export type WalkPage = { items: WalkSummary[]; nextPage: number | null };
+export type NearbyWalk = { walk: WalkSummary; proximityMeters: number };
+export type NearbyWalkPage = { items: NearbyWalk[]; nextPage: number | null };
 export type WalkInput = { clientWalkId: string; startedAt: string; endedAt: string; points: WalkPoint[] };
 export type Comment = {
   id: number;
@@ -240,6 +245,10 @@ export function getWalk(id: number): Promise<Walk> {
 
 export function getWalks(limit = 20, page = 0): Promise<WalkPage> {
   return request<WalkPage>(`/api/walks?limit=${limit}&page=${page}`);
+}
+
+export function getNearbyWalks(latitude: number, longitude: number, page = 0): Promise<NearbyWalkPage> {
+  return request<NearbyWalkPage>(`/api/walks/nearby?latitude=${latitude}&longitude=${longitude}&radiusMeters=1000&limit=20&page=${page}`);
 }
 
 export function getPost(id: number): Promise<Post> {

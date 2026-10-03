@@ -1,8 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
-import type { WalkPoint } from '@/lib/api';
+import type { WalkPoint, WalkRoute } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
-export type WalkMapProps = { points: WalkPoint[]; followLatest?: boolean };
+export type WalkMapProps = { points: WalkPoint[]; route?: WalkRoute; followLatest?: boolean };
 
 export default function WalkMap({ points }: WalkMapProps) {
   return <View style={styles.fallback}>

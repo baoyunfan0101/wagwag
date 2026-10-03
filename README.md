@@ -1,16 +1,18 @@
 # WagWag
 
-Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. Module 2 adds posts, a chronological feed, likes, comments, and multi-image uploads. Module 3 adds follows, follow requests for private pets, block/mute controls, and a following feed. Module 4 adds communities, membership, community posts, moderation roles and rules, and discovery. Module 5A records foreground GPS walks and displays their routes on a map. PostgreSQL remains the source of truth; Redis caches relationship status and counts. The `dev` profile seeds the development user and pet (both ID 1), plus a demo neighbor pet (ID 1000) for trying social flows.
+Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. Module 2 adds posts, a chronological feed, likes, comments, and multi-image uploads. Module 3 adds follows, follow requests for private pets, block/mute controls, and a following feed. Module 4 adds communities, membership, community posts, moderation roles and rules, and discovery. Module 5 records GPS walks, supports optional background recording, and uses PostGIS for route geometry, distance, and nearby-route search. PostgreSQL remains the source of truth; Redis caches relationship status and counts. The `dev` profile seeds the development user and pet (both ID 1), plus a demo neighbor pet (ID 1000) for trying social flows.
 
 ## Run locally
 
-Requirements: Java 21, Node.js, npm, Docker Desktop, and an iOS or Android simulator or device. Walk maps require a native development build; Expo Go does not include the Mapbox native SDK.
+Requirements: Java 21, Node.js 24, npm, Docker Desktop, and an iOS or Android simulator or device. Walk maps and background recording require a native development build; Expo Go does not include the Mapbox native SDK.
 
 1. Start PostgreSQL, SeaweedFS, and Redis from the repository root:
 
    ~~~sh
    docker compose up -d postgres seaweedfs redis
    ~~~
+
+   The PostgreSQL service now uses `postgis/postgis:17-3.5`. Its image runs with amd64 emulation on Apple Silicon. Existing pre-v1 PostgreSQL volumes must be reset using the PostgreSQL-only commands below before running this baseline. Other service data is unaffected.
 
 2. Run the API:
 
@@ -37,7 +39,9 @@ Requirements: Java 21, Node.js, npm, Docker Desktop, and an iOS or Android simul
 
    For a physical phone, replace `localhost` in `mobile/.env` and the API's `S3_ENDPOINT` and `S3_PUBLIC_BASE_URL` with the computer's LAN IP. Both the API and SeaweedFS must be reachable by the phone. Android emulators can use `10.0.2.2` for the host. Restart Expo after editing `.env`.
 
-   To use walk maps, set `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` in `mobile/.env` to a Mapbox **public** access token. A native build also needs a separate Mapbox **secret** token with `Downloads:Read` scope, configured locally for the platform SDK download: [iOS `.netrc`](https://docs.mapbox.com/ios/maps/guides/install/) or [Android Gradle properties](https://rnmapbox.github.io/docs/RNMapboxMapsDownloadTokenDetails). Never commit that secret token. After configuring it, build and run the native app with `npx expo run:ios` or `npx expo run:android` from `mobile/`; use `npm start` for later JavaScript changes. A simulator can display saved routes, but recording a real walk needs a device with GPS. Walk recording uses foreground location only, so keep the app open until you stop and save.
+   To use walk maps, set `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN` in `mobile/.env` to a Mapbox **public** access token. A native build also needs a separate Mapbox **secret** token with `Downloads:Read` scope, configured locally for the platform SDK download: [iOS `.netrc`](https://docs.mapbox.com/ios/maps/guides/install/) or [Android Gradle properties](https://rnmapbox.github.io/docs/RNMapboxMapsDownloadTokenDetails). Never commit that secret token. After configuring it, build and run the native app with `npx expo run:ios` or `npx expo run:android` from `mobile/`; use `npm start` for later JavaScript changes. Rebuild the native app after adding the background-location permissions. A simulator can display saved routes, but recording a real walk needs a device with GPS.
+
+   The walk screen offers **Record with screen locked**. This requests foreground and background location permission (iOS Always; Android Allow all the time) and uses an Android foreground-service notification while recording. Turn it off for foreground-only recording; web always uses foreground recording. Background batches update a local active-route draft and sync into the screen when it returns to the foreground. Stop/save and explicit discard stop location updates. Terminating the app or OS/vendor restrictions can stop background recording; uninterrupted recording after process death is not guaranteed. Interrupted drafts can be saved or discarded when reopened. GPS sampling requests 5 m / 3 s intervals and keeps at most 2000 points. Fixes with accuracy worse than 35 m, movement under 5 m, non-increasing timestamps, or jumps above 12 m/s are ignored.
 
    Tap **Feed** on the pet profile to create a post, like posts, and comment. The composer can upload up to four photos; selected photos are resized and compressed before upload. Tap **Friends** to find Biscuit, follow or unfollow pets, and view follower/following lists. The feed's **Following** filter shows posts from followed pets. A private pet must approve new follow requests. On a pet profile, you can mute its posts or block it; your own profile has the private setting and request list. Tap **Explore communities** to search, browse popular communities, create, join, and leave; joined pets can post from the community page. Owners can set moderators, and owners and moderators can edit rules, remove members, and remove posts from a community. Tap **Walks** on the pet profile to record a walk and revisit saved routes.
 
@@ -94,6 +98,7 @@ This deletes local PostgreSQL data, including posts and profiles, but leaves the
 | POST | `/api/walks` | Save a completed walk with ordered GPS points |
 | GET | `/api/walks?limit=20&page=0` | List the active pet's walks, newest first |
 | GET | `/api/walks/{id}` | Read the active pet's saved route |
+| GET | `/api/walks/nearby?latitude=29.76&longitude=-95.37&radiusMeters=1000&limit=20&page=0` | Find the active pet's routes near a location |
 | POST | `/api/posts/{id}/likes` | Like a post |
 | DELETE | `/api/posts/{id}/likes` | Unlike a post |
 | POST | `/api/posts/{id}/comments` | Add a comment |
@@ -106,6 +111,8 @@ To add photos, request a ticket with `{ "contentType": "image/jpeg" }` at `/api/
 The feed returns `{ "items": [...], "nextCursor": "..." }` in chronological newest-first order, with ID as the tie-breaker. `limit` defaults to 20 and must be between 1 and 50. A null `nextCursor` means there are no more posts. Clients should pass the cursor back unchanged and treat it as opaque.
 
 To save a walk, send `{ "clientWalkId": "a9ee0f56-095a-4ec8-bf87-e56531fdcdb9", "startedAt": "2026-10-03T10:00:00Z", "endedAt": "2026-10-03T10:10:00Z", "points": [{ "latitude": 29.7604, "longitude": -95.3698, "recordedAt": "2026-10-03T10:00:00Z" }] }` to `POST /api/walks`. Generate one UUID per walk and reuse the exact request body for retries. The first save returns 201; an identical retry returns the same walk with 200. Reusing the UUID for different walk data returns 409. Points must be chronological and within the walk time; a walk accepts 1-2000 points. The API stores coordinates in PostgreSQL for the active development pet. Walk history uses zero-based `page`, `limit` from 1 to 50, and a null `nextPage` at the end.
+
+Walks also store a PostGIS `LineString` in WGS84 (SRID 4326), with a GiST geography index. `distanceMeters` is calculated from the full route using geography; details return original `points` and a GeoJSON `route` simplified for map display with a 0.00003-degree tolerance. A single-point walk has a zero-length route. Nearby search uses `ST_DWithin` against the full route and returns `{ "items": [{ "walk": {...}, "proximityMeters": 0 }], "nextPage": null }`, nearest first. `radiusMeters` defaults to 1000 and must be 1-10000. Walk history, details, and nearby search all remain scoped to the active pet. The **My routes near me** screen searches within 1 km; routes are not publicly shared.
 
 Create a community with `{ "name": "Houston Dog Parks", "description": "Local walks" }`. Its creator joins automatically; join and leave are idempotent. Community lists use zero-based `page` and `nextPage`. To post in a community, include `"communityId": 123` in the existing post request while joined. A post belongs to at most one community. Community feeds use the same newest-first cursor contract and respect existing private-profile, block, and mute visibility rules.
 
@@ -121,6 +128,9 @@ For AWS, leave `S3_ACCESS_KEY` and `S3_SECRET_KEY` unset to use the standard AWS
 ~~~sh
 cd backend && ./mvnw test
 cd mobile && npm run typecheck
+cd mobile && npm test
 ~~~
 
-The backend suite checks both the default and development configurations, including PostgreSQL, SeaweedFS, and Redis integration tests. A running Docker daemon is required.
+The backend suite checks both the default and development configurations, including PostGIS, SeaweedFS, and Redis integration tests. A running Docker daemon is required. Mobile route-filter tests use the Node.js 24 test runner.
+
+For native verification, start a walk with background recording enabled on a device, lock the screen and move outdoors, then reopen WagWag and confirm the additional route points. Stop/save, reopen the saved route, and check the map and distance. Repeat with foreground-only recording and a navigation/discard attempt. Device permission prompts, background delivery, and Mapbox rendering require this device check; JavaScript bundle export alone does not verify them.

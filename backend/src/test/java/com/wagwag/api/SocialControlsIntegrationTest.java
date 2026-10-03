@@ -35,6 +35,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -44,7 +45,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 class SocialControlsIntegrationTest {
     @Container
-    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
+        DockerImageName.parse("postgis/postgis:17-3.5").asCompatibleSubstituteFor("postgres"));
 
     @Container
     static final GenericContainer<?> redis = new GenericContainer<>("redis:7.4-alpine")

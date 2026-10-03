@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -18,7 +19,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 class DefaultConfigurationTest {
     @Container
-    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
+        DockerImageName.parse("postgis/postgis:17-3.5").asCompatibleSubstituteFor("postgres"));
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {

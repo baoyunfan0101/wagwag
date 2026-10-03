@@ -28,6 +28,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -37,7 +38,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 class WalkApiIntegrationTest {
     @Container
-    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+    static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
+        DockerImageName.parse("postgis/postgis:17-3.5").asCompatibleSubstituteFor("postgres"));
 
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
@@ -71,6 +73,74 @@ class WalkApiIntegrationTest {
         mvc.perform(get("/api/walks").param("limit", "1").param("page", "1"))
             .andExpect(jsonPath("$.items[0].id").value(first))
             .andExpect(jsonPath("$.nextPage").value((Object) null));
+    }
+
+    @Test
+    void routeGeometryDistanceAndSimplifiedDisplayPreserveOriginalPoints() throws Exception {
+        String body = "{\"clientWalkId\":\"" + UUID.randomUUID() + "\","
+            + "\"startedAt\":\"2026-01-01T10:00:00Z\",\"endedAt\":\"2026-01-01T10:05:00Z\",\"points\":["
+            + "{\"latitude\":29.76,\"longitude\":-95.37,\"recordedAt\":\"2026-01-01T10:00:00Z\"},"
+            + "{\"latitude\":29.76,\"longitude\":-95.369,\"recordedAt\":\"2026-01-01T10:01:00Z\"},"
+            + "{\"latitude\":29.76,\"longitude\":-95.368,\"recordedAt\":\"2026-01-01T10:02:00Z\"}]}";
+        MockHttpServletResponse response = submit(body);
+        assertThat(response.getStatus()).isEqualTo(201);
+        long id = walkId(response);
+        assertThat(jdbc.queryForObject("SELECT GeometryType(route) FROM walks WHERE id = ?", String.class, id))
+            .isEqualTo("LINESTRING");
+        assertThat(jdbc.queryForObject("SELECT ST_SRID(route) FROM walks WHERE id = ?", Integer.class, id)).isEqualTo(4326);
+        assertThat(jdbc.queryForObject("SELECT ST_NPoints(route) FROM walks WHERE id = ?", Integer.class, id)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'walks_route_geography_idx' "
+            + "AND indexdef LIKE '%gist%'", Long.class)).isEqualTo(1);
+        mvc.perform(get("/api/walks/{id}", id))
+            .andExpect(jsonPath("$.points.length()").value(3))
+            .andExpect(jsonPath("$.distanceMeters").value(org.hamcrest.Matchers.greaterThan(190.0)))
+            .andExpect(jsonPath("$.route.type").value("LineString"))
+            .andExpect(jsonPath("$.route.coordinates.length()").value(2))
+            .andExpect(jsonPath("$.route.coordinates[0][0]").value(-95.37));
+        assertThat(submit(body).getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void singlePointWalkHasZeroDistanceAndCanStillBeRetried() throws Exception {
+        String body = "{\"clientWalkId\":\"" + UUID.randomUUID() + "\","
+            + "\"startedAt\":\"2026-01-01T10:00:00Z\",\"endedAt\":\"2026-01-01T10:05:00Z\","
+            + "\"points\":[{\"latitude\":29.76,\"longitude\":-95.37,\"recordedAt\":\"2026-01-01T10:00:00Z\"}]}";
+        MockHttpServletResponse response = submit(body);
+        assertThat(response.getStatus()).isEqualTo(201);
+        mvc.perform(get("/api/walks/{id}", walkId(response)))
+            .andExpect(jsonPath("$.distanceMeters").value(0.0))
+            .andExpect(jsonPath("$.points.length()").value(1));
+        assertThat(submit(body).getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void nearbyUsesRouteDistanceAndOnlyReturnsActivePetsWalks() throws Exception {
+        long near = createWalk("2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
+        String far = walkBody(UUID.randomUUID(), "2026-01-02T10:00:00Z", "2026-01-02T10:05:00Z")
+            .replace("29.7604", "30.7604").replace("29.761", "30.761");
+        assertThat(submit(far).getStatus()).isEqualTo(201);
+        jdbc.update("INSERT INTO walks (pet_id, client_walk_id, started_at, ended_at, route) "
+            + "VALUES (1000, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+            + "ST_GeomFromText('LINESTRING(-95.3698 29.7604,-95.368 29.761)', 4326))", UUID.randomUUID());
+        mvc.perform(get("/api/walks/nearby").param("latitude", "29.7604").param("longitude", "-95.3698")
+                .param("radiusMeters", "100"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].walk.id").value(near))
+            .andExpect(jsonPath("$.items[0].proximityMeters").value(0.0));
+        long second = createWalk("2026-01-03T10:00:00Z", "2026-01-03T10:05:00Z");
+        mvc.perform(get("/api/walks/nearby").param("latitude", "29.7604").param("longitude", "-95.3698")
+                .param("radiusMeters", "100").param("limit", "1"))
+            .andExpect(jsonPath("$.items[0].walk.id").value(second))
+            .andExpect(jsonPath("$.nextPage").value(1));
+        mvc.perform(get("/api/walks/nearby").param("latitude", "29.7604").param("longitude", "-95.3698")
+                .param("radiusMeters", "100").param("limit", "1").param("page", "1"))
+            .andExpect(jsonPath("$.items[0].walk.id").value(near))
+            .andExpect(jsonPath("$.nextPage").value((Object) null));
+        mvc.perform(get("/api/walks/nearby").param("latitude", "91").param("longitude", "0"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/walks/nearby").param("latitude", "29").param("longitude", "-95")
+            .param("radiusMeters", "10001")).andExpect(status().isBadRequest());
     }
 
     @Test
@@ -152,9 +222,9 @@ class WalkApiIntegrationTest {
     @Test
     void walkHistoryIsScopedToActivePetAndCoordinatesHaveDatabaseConstraints() throws Exception {
         UUID clientId = UUID.randomUUID();
-        long other = jdbc.queryForObject("INSERT INTO walks (pet_id, client_walk_id, started_at, ended_at) "
+        long other = jdbc.queryForObject("INSERT INTO walks (pet_id, client_walk_id, started_at, ended_at, route) "
             + "VALUES (1000, ?, TIMESTAMPTZ '2026-01-01 10:00:00+00', "
-            + "TIMESTAMPTZ '2026-01-01 10:05:00+00') RETURNING id", Long.class, clientId);
+            + "TIMESTAMPTZ '2026-01-01 10:05:00+00', ST_GeomFromText('LINESTRING(-95 29,-95 29)', 4326)) RETURNING id", Long.class, clientId);
         mvc.perform(get("/api/walks/{id}", other)).andExpect(status().isNotFound());
         mvc.perform(get("/api/walks")).andExpect(jsonPath("$.items.length()").value(0));
         assertThatThrownBy(() -> jdbc.update("INSERT INTO walk_points "
@@ -166,8 +236,8 @@ class WalkApiIntegrationTest {
             + "VALUES (?, -1, 29, -95, CURRENT_TIMESTAMP)", other))
             .isInstanceOf(DataIntegrityViolationException.class);
         assertThatThrownBy(() -> jdbc.update("INSERT INTO walks "
-            + "(pet_id, client_walk_id, started_at, ended_at) "
-            + "VALUES (1000, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", clientId))
+            + "(pet_id, client_walk_id, started_at, ended_at, route) "
+            + "VALUES (1000, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ST_GeomFromText('LINESTRING(-95 29,-95 29)', 4326))", clientId))
             .isInstanceOf(DataIntegrityViolationException.class);
         mvc.perform(get("/api/walks").param("limit", "0")).andExpect(status().isBadRequest());
         mvc.perform(get("/api/walks").param("page", "-1")).andExpect(status().isBadRequest());

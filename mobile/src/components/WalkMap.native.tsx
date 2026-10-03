@@ -6,14 +6,14 @@ import { colors } from '@/lib/theme';
 const token = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN;
 if (token && token.startsWith('pk.')) void Mapbox.setAccessToken(token);
 
-export default function WalkMap({ points, followLatest = false }: WalkMapProps) {
+export default function WalkMap({ points, route, followLatest = false }: WalkMapProps) {
   if (!token || !token.startsWith('pk.')) {
     return <View style={styles.fallback}>
       <Text style={styles.message}>Set EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN to show the route map.</Text>
     </View>;
   }
 
-  const coordinates: [number, number][] = points.map((point) => [point.longitude, point.latitude]);
+  const coordinates: [number, number][] = route?.coordinates ?? points.map((point) => [point.longitude, point.latitude]);
   const latest: [number, number] = coordinates.at(-1) ?? [-95.3698, 29.7604];
   const longitudes = coordinates.map((point) => point[0]);
   const latitudes = coordinates.map((point) => point[1]);
