@@ -94,6 +94,10 @@ export default function ProfileScreen() {
             <Ionicons name="walk-outline" size={18} color={colors.green} />
             <Text style={styles.privacyText}>Walks and routes</Text>
           </Pressable>
+          <Pressable style={styles.privacyButton} onPress={() => router.push('/tasks')}>
+            <Ionicons name="briefcase-outline" size={18} color={colors.green} />
+            <Text style={styles.privacyText}>Pet-care tasks</Text>
+          </Pressable>
           <Text style={styles.footer}>Made for the pets who make life better.</Text>
         </> : null}
     </ScrollView>
