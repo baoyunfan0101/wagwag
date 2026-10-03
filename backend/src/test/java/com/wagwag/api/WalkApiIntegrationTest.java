@@ -160,6 +160,53 @@ class WalkApiIntegrationTest {
     }
 
     @Test
+    void impossibleSpeedCannotCreateWalkOrTerritory() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(40.7128, -74.0060, "2026-01-01T10:01:00Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walks", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walk_points", Long.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM territories", Long.class)).isZero();
+    }
+
+    @Test
+    void equalPointTimestampsAreRejectedEvenForStationaryPoints() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7610, -95.3680, "2026-01-01T10:00:00Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(body))
+            .andExpect(status().isBadRequest());
+        String stationary = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(stationary))
+            .andExpect(status().isBadRequest());
+        String sameStoredMicrosecond = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:01:00Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00.000000100Z"),
+            point(29.7604, -95.3698, "2026-01-01T10:00:00.000000900Z"));
+        mvc.perform(post("/api/walks").contentType(MediaType.APPLICATION_JSON).content(sameStoredMicrosecond))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walks", Long.class)).isZero();
+    }
+
+    @Test
+    void plausibleFastWalkAndStationarySegmentCanCreateTerritory() throws Exception {
+        String body = routeBody("2026-01-01T10:00:00Z", "2026-01-01T10:00:20Z",
+            point(29.7604, -95.3698, "2026-01-01T10:00:00Z"),
+            point(29.7609, -95.3698, "2026-01-01T10:00:10Z"),
+            point(29.7609, -95.3698, "2026-01-01T10:00:20Z"));
+        MockHttpServletResponse created = submit(body);
+        assertThat(created.getStatus()).isEqualTo(201);
+        long id = walkId(created);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM walk_points WHERE walk_id = ?", Long.class, id))
+            .isEqualTo(3);
+        mvc.perform(post("/api/walks/{id}/territory", id)).andExpect(status().isCreated());
+        assertThat(submit(body).getStatus()).isEqualTo(200);
+    }
+
+    @Test
     void exactRetryReturnsOneWalkAndOneSetOfPoints() throws Exception {
         UUID clientId = UUID.randomUUID();
         String body = walkBody(clientId, "2026-01-01T10:00:00Z", "2026-01-01T10:05:00Z");
@@ -329,6 +376,16 @@ class WalkApiIntegrationTest {
             + "\",\"points\":[{\"latitude\":29.7604,\"longitude\":-95.3698,\"recordedAt\":\""
             + startedAt + "\"},{\"latitude\":29.761,\"longitude\":-95.368,\"recordedAt\":\""
             + endedAt + "\"}]}";
+    }
+
+    private String routeBody(String startedAt, String endedAt, String... points) {
+        return "{\"clientWalkId\":\"" + UUID.randomUUID() + "\",\"startedAt\":\"" + startedAt
+            + "\",\"endedAt\":\"" + endedAt + "\",\"points\":[" + String.join(",", points) + "]}";
+    }
+
+    private String point(double latitude, double longitude, String recordedAt) {
+        return "{\"latitude\":" + latitude + ",\"longitude\":" + longitude
+            + ",\"recordedAt\":\"" + recordedAt + "\"}";
     }
 
     private MockHttpServletResponse submit(String body) throws Exception {
