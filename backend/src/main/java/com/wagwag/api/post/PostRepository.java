@@ -57,4 +57,16 @@ public interface PostRepository extends JpaRepository<Post, Long> {
         + "order by p.createdAt desc, p.id desc")
     List<Post> findCommunityFeedAfter(long communityId, long actorId, Collection<Long> hidden,
                                       Instant createdAt, long id, Pageable page);
+
+    @Query("select p from Post p join fetch p.pet where exists "
+        + "(select pc.postId from PostCommunity pc where pc.postId = p.id and pc.communityId = :communityId) "
+        + "order by p.createdAt desc, p.id desc")
+    List<Post> findCommunityModerationFeed(long communityId, Pageable page);
+
+    @Query("select p from Post p join fetch p.pet where exists "
+        + "(select pc.postId from PostCommunity pc where pc.postId = p.id and pc.communityId = :communityId) "
+        + "and (p.createdAt < :createdAt or (p.createdAt = :createdAt and p.id < :id)) "
+        + "order by p.createdAt desc, p.id desc")
+    List<Post> findCommunityModerationFeedAfter(long communityId,
+                                                Instant createdAt, long id, Pageable page);
 }

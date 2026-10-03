@@ -57,6 +57,7 @@ class CommunityApiIntegrationTest {
     void clean() {
         cache.delete("wagwag:community:hot-ids");
         jdbc.update("DELETE FROM pet_blocks");
+        jdbc.update("DELETE FROM pet_mutes");
         jdbc.update("DELETE FROM pet_follows");
         jdbc.update("DELETE FROM posts");
         jdbc.update("DELETE FROM community_members");
@@ -260,11 +261,11 @@ class CommunityApiIntegrationTest {
 
     @Test
     void communityFeedRespectsPrivateProfilesAndBlocks() throws Exception {
-        long id = createCommunity("Neighborhood Pets");
+        long id = createOtherPetCommunity("Neighborhood Pets");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1)", id);
         long postId = jdbc.queryForObject("INSERT INTO posts (pet_id, body) VALUES (1000, 'Biscuit') "
             + "RETURNING id", Long.class);
         jdbc.update("INSERT INTO post_communities (post_id, community_id) VALUES (?, ?)", postId, id);
-        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1000)", id);
         jdbc.update("UPDATE pets SET private_profile = TRUE WHERE id = 1000");
         mvc.perform(get("/api/communities/{id}/feed", id))
             .andExpect(jsonPath("$.items.length()").value(0));
@@ -276,6 +277,150 @@ class CommunityApiIntegrationTest {
             .andExpect(jsonPath("$.items.length()").value(0));
         mvc.perform(get("/api/communities/{id}/members", id))
             .andExpect(jsonPath("$.items.length()").value(1));
+    }
+
+    @Test
+    void ownerCanModerateReverseBlockedMemberAndPost() throws Exception {
+        long id = createCommunity("Open Trails");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1000)", id);
+        long first = attachPost(id, 1000, "First member post");
+        long second = attachPost(id, 1000, "Second member post");
+        long third = attachPost(id, 1000, "Third member post");
+        jdbc.update("UPDATE posts SET created_at = TIMESTAMPTZ '2026-01-01 00:00:00+00' "
+            + "WHERE id IN (?, ?, ?)", first, second, third);
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1000, 1)");
+
+        String firstPage = mvc.perform(get("/api/communities/{id}/feed", id).param("limit", "2"))
+            .andExpect(jsonPath("$.items[0].id").value(third))
+            .andExpect(jsonPath("$.items[1].id").value(second))
+            .andReturn().getResponse().getContentAsString();
+        String cursor = JsonPath.read(firstPage, "$.nextCursor");
+        assertThat(cursor).isNotBlank();
+        mvc.perform(get("/api/communities/{id}/feed", id).param("limit", "2").param("cursor", cursor))
+            .andExpect(jsonPath("$.items[0].id").value(first))
+            .andExpect(jsonPath("$.nextCursor").value((Object) null));
+        mvc.perform(get("/api/communities/{id}/members", id))
+            .andExpect(jsonPath("$.items.length()").value(2))
+            .andExpect(jsonPath("$.items[1].id").value(1000));
+        mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/posts/{id}", third)).andExpect(status().isNotFound());
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1, 1000)");
+        mvc.perform(get("/api/communities/{id}/feed", id))
+            .andExpect(jsonPath("$.items.length()").value(3));
+        mvc.perform(get("/api/communities/{id}/members", id))
+            .andExpect(jsonPath("$.items.length()").value(2));
+
+        mvc.perform(delete("/api/communities/{id}/posts/{postId}", id, third))
+            .andExpect(status().isNoContent());
+        mvc.perform(delete("/api/communities/{id}/members/1000", id))
+            .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM post_communities WHERE post_id = ?",
+            Long.class, third)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM community_members "
+            + "WHERE community_id = ? AND pet_id = 1000", Long.class, id)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts WHERE id = ?", Long.class, third))
+            .isEqualTo(1);
+    }
+
+    @Test
+    void moderatorCanSeeAndRemoveBlockedMemberAndPostOnlyInOwnCommunity() throws Exception {
+        long managed = createOtherPetCommunity("Managed Club");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id, role) "
+            + "VALUES (?, 1, 'MODERATOR')", managed);
+        long thirdPet = createThirdPet();
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, ?)", managed, thirdPet);
+        long moderatedPost = attachPost(managed, thirdPet, "Moderated story");
+
+        long ordinary = createOtherPetCommunity("Ordinary Club");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1), (?, ?)",
+            ordinary, ordinary, thirdPet);
+        long ordinaryPost = attachPost(ordinary, thirdPet, "Ordinary story");
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (?, 1)", thirdPet);
+
+        mvc.perform(get("/api/communities/{id}/feed", managed))
+            .andExpect(jsonPath("$.items[0].id").value(moderatedPost))
+            .andExpect(jsonPath("$.items.length()").value(1));
+        mvc.perform(get("/api/communities/{id}/members", managed))
+            .andExpect(jsonPath("$.items.length()").value(3));
+        mvc.perform(get("/api/communities/{id}/feed", ordinary))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/communities/{id}/members", ordinary))
+            .andExpect(jsonPath("$.items.length()").value(2));
+        mvc.perform(get("/api/posts/{id}", moderatedPost)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items.length()").value(0));
+
+        mvc.perform(delete("/api/communities/{id}/posts/{postId}", managed, moderatedPost))
+            .andExpect(status().isNoContent());
+        mvc.perform(delete("/api/communities/{id}/members/{petId}", managed, thirdPet))
+            .andExpect(status().isNoContent());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM post_communities WHERE post_id = ?",
+            Long.class, moderatedPost)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM community_members "
+            + "WHERE community_id = ? AND pet_id = ?", Long.class, managed, thirdPet)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts WHERE id = ?", Long.class, moderatedPost))
+            .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM post_communities WHERE post_id = ?",
+            Long.class, ordinaryPost)).isEqualTo(1);
+    }
+
+    @Test
+    void ownerCanModeratePrivateAndMutedAuthorWithoutSocialVisibility() throws Exception {
+        long id = createCommunity("Quiet Pets");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1000)", id);
+        long postId = attachPost(id, 1000, "Private community story");
+        jdbc.update("UPDATE pets SET private_profile = TRUE WHERE id = 1000");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pet_follows WHERE follower_pet_id = 1 "
+            + "AND following_pet_id = 1000", Long.class)).isZero();
+        mvc.perform(get("/api/communities/{id}/feed", id))
+            .andExpect(jsonPath("$.items[0].id").value(postId));
+        mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/posts/{id}", postId)).andExpect(status().isNotFound());
+
+        jdbc.update("UPDATE pets SET private_profile = FALSE WHERE id = 1000");
+        jdbc.update("INSERT INTO pet_mutes (muter_pet_id, muted_pet_id) VALUES (1, 1000)");
+        mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/communities/{id}/feed", id))
+            .andExpect(jsonPath("$.items[0].id").value(postId));
+    }
+
+    @Test
+    void ordinaryMemberStillRespectsReverseBlock() throws Exception {
+        long id = createOtherPetCommunity("Everyday Club");
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, 1)", id);
+        long thirdPet = createThirdPet();
+        jdbc.update("INSERT INTO community_members (community_id, pet_id) VALUES (?, ?)", id, thirdPet);
+        attachPost(id, thirdPet, "Hidden story");
+        jdbc.update("INSERT INTO pet_mutes (muter_pet_id, muted_pet_id) VALUES (1, ?)", thirdPet);
+        mvc.perform(get("/api/communities/{id}/feed", id))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/communities/{id}/members", id))
+            .andExpect(jsonPath("$.items.length()").value(3));
+        jdbc.update("DELETE FROM pet_mutes WHERE muter_pet_id = 1 AND muted_pet_id = ?", thirdPet);
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (?, 1)", thirdPet);
+        mvc.perform(get("/api/communities/{id}/feed", id))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/communities/{id}/members", id))
+            .andExpect(jsonPath("$.items.length()").value(2));
+    }
+
+    private long createOtherPetCommunity(String name) {
+        long id = jdbc.queryForObject("INSERT INTO communities (name, created_by_pet_id) "
+            + "VALUES (?, 1000) RETURNING id", Long.class, name);
+        jdbc.update("INSERT INTO community_members (community_id, pet_id, role) "
+            + "VALUES (?, 1000, 'OWNER')", id);
+        return id;
+    }
+
+    private long createThirdPet() {
+        return jdbc.queryForObject("INSERT INTO pets (owner_id, name, species, gender) "
+            + "VALUES (1, 'Peanut', 'Dog', 'UNKNOWN') RETURNING id", Long.class);
+    }
+
+    private long attachPost(long communityId, long petId, String body) {
+        long postId = jdbc.queryForObject("INSERT INTO posts (pet_id, body) VALUES (?, ?) RETURNING id",
+            Long.class, petId, body);
+        jdbc.update("INSERT INTO post_communities (post_id, community_id) VALUES (?, ?)", postId, communityId);
+        return postId;
     }
 
     private long createCommunity(String name) throws Exception {

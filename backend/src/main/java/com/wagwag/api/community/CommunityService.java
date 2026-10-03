@@ -197,18 +197,22 @@ public class CommunityService {
 
     @Transactional(readOnly = true)
     public MemberPage members(long id, int limit, int page) {
-        detail(id);
+        boolean moderationView = detail(id).canModerate();
         int offset = offset(limit, page);
         long actorId = actorId();
-        List<MemberSummary> rows = jdbc.query("SELECT p.id, p.name, p.species, p.avatar_url, m.role "
+        String sql = "SELECT p.id, p.name, p.species, p.avatar_url, m.role "
             + "FROM community_members m JOIN pets p ON p.id = m.pet_id "
-            + "WHERE m.community_id = ? AND NOT EXISTS (SELECT 1 FROM pet_blocks b "
+            + "WHERE m.community_id = ? "
+            + (moderationView ? "" : "AND NOT EXISTS (SELECT 1 FROM pet_blocks b "
             + "WHERE (b.blocker_pet_id = ? AND b.blocked_pet_id = p.id) "
-            + "OR (b.blocker_pet_id = p.id AND b.blocked_pet_id = ?)) "
-            + "ORDER BY m.joined_at ASC, p.id ASC LIMIT ? OFFSET ?",
+            + "OR (b.blocker_pet_id = p.id AND b.blocked_pet_id = ?)) ")
+            + "ORDER BY m.joined_at ASC, p.id ASC LIMIT ? OFFSET ?";
+        Object[] args = moderationView ? new Object[] {id, limit + 1, offset}
+            : new Object[] {id, actorId, actorId, limit + 1, offset};
+        List<MemberSummary> rows = jdbc.query(sql,
             (rs, row) -> new MemberSummary(rs.getLong("id"), rs.getString("name"),
                 rs.getString("species"), rs.getString("avatar_url"), rs.getString("role")),
-            id, actorId, actorId, limit + 1, offset);
+            args);
         boolean more = rows.size() > limit;
         return new MemberPage(more ? rows.subList(0, limit) : rows, more ? page + 1 : null);
     }
@@ -257,10 +261,14 @@ public class CommunityService {
 
     private String requireManager(long id) {
         String role = role(id, actorId());
-        if (!"OWNER".equals(role) && !"MODERATOR".equals(role)) {
+        if (!isManagerRole(role)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Community manager required");
         }
         return role;
+    }
+
+    private static boolean isManagerRole(String role) {
+        return "OWNER".equals(role) || "MODERATOR".equals(role);
     }
 
     private static String trimNullable(String value) {
@@ -290,7 +298,9 @@ public class CommunityService {
 
     public record CommunityResponse(long id, String name, String description, String rules,
                                     long createdByPetId, Instant createdAt, long memberCount,
-                                    boolean joinedByMe, String myRole) {}
+                                    boolean joinedByMe, String myRole) {
+        public boolean canModerate() { return isManagerRole(myRole); }
+    }
     public record CommunityPage(List<CommunityResponse> items, Integer nextPage) {}
     public record MemberSummary(long id, String name, String species, String avatarUrl, String role) {}
     public record MemberPage(List<MemberSummary> items, Integer nextPage) {}

@@ -90,26 +90,30 @@ public class PostService {
 
     @Transactional(readOnly = true)
     public FeedPage feed(int limit, String cursor, boolean following) {
-        return page(limit, cursor, following, null);
+        return page(limit, cursor, following, null, false);
     }
 
     @Transactional(readOnly = true)
     public FeedPage communityFeed(long communityId, int limit, String cursor) {
-        communities.detail(communityId);
-        return page(limit, cursor, false, communityId);
+        boolean moderationView = communities.detail(communityId).canModerate();
+        return page(limit, cursor, false, communityId, moderationView);
     }
 
-    private FeedPage page(int limit, String cursor, boolean following, Long communityId) {
+    private FeedPage page(int limit, String cursor, boolean following, Long communityId,
+                          boolean moderationView) {
         if (limit < 1 || limit > 50) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Feed limit must be between 1 and 50");
         }
         FeedCursor after = decodeCursor(cursor);
         PageRequest page = PageRequest.of(0, limit + 1);
         long actorId = actor().getId();
-        List<Long> hidden = restrictions.hiddenFeedPetIds(actorId);
+        List<Long> hidden = moderationView ? List.of(0L) : restrictions.hiddenFeedPetIds(actorId);
         if (hidden.isEmpty()) hidden = List.of(0L);
         List<Post> rows;
-        if (communityId != null) {
+        if (communityId != null && moderationView) {
+            rows = after == null ? posts.findCommunityModerationFeed(communityId, page)
+                : posts.findCommunityModerationFeedAfter(communityId, after.createdAt(), after.id(), page);
+        } else if (communityId != null) {
             rows = after == null ? posts.findCommunityFeed(communityId, actorId, hidden, page)
                 : posts.findCommunityFeedAfter(communityId, actorId, hidden,
                     after.createdAt(), after.id(), page);
