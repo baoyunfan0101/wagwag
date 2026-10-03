@@ -72,6 +72,11 @@ export type CommunityPage = { items: Community[]; nextPage: number | null };
 export type CommunityMember = { id: number; name: string; species: string; avatarUrl: string | null;
   role: 'OWNER' | 'MODERATOR' | 'MEMBER' };
 export type CommunityMemberPage = { items: CommunityMember[]; nextPage: number | null };
+export type WalkPoint = { latitude: number; longitude: number; recordedAt: string };
+export type Walk = { id: number; petId: number; startedAt: string; endedAt: string; points: WalkPoint[] };
+export type WalkSummary = { id: number; petId: number; startedAt: string; endedAt: string; pointCount: number };
+export type WalkPage = { items: WalkSummary[]; nextPage: number | null };
+export type WalkInput = { startedAt: string; endedAt: string; points: WalkPoint[] };
 export type Comment = {
   id: number;
   postId: number;
@@ -223,6 +228,18 @@ export function getCommunityMembers(id: number, limit = 20, page = 0): Promise<C
 export function getCommunityFeed(id: number, limit = 20, cursor?: string): Promise<FeedPage> {
   const query = `limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
   return request<FeedPage>(`/api/communities/${id}/feed?${query}`);
+}
+
+export function createWalk(input: WalkInput): Promise<Walk> {
+  return request<Walk>('/api/walks', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function getWalk(id: number): Promise<Walk> {
+  return request<Walk>(`/api/walks/${id}`);
+}
+
+export function getWalks(limit = 20, page = 0): Promise<WalkPage> {
+  return request<WalkPage>(`/api/walks?limit=${limit}&page=${page}`);
 }
 
 export function getPost(id: number): Promise<Post> {

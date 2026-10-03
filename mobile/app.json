@@ -23,7 +23,12 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-image-picker", { "photosPermission": "Choose a photo for your pet's profile." }],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a photo for your pet's profile."
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -31,7 +36,9 @@
           "image": "./assets/icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      ["expo-location", { "locationWhenInUsePermission": "WagWag needs your location to record a walk." }],
+      "@rnmapbox/maps"
     ],
     "experiments": {
       "typedRoutes": true,
