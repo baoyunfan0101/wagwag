@@ -1,20 +1,29 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { createPost, uploadPostImage } from '@/lib/api';
+import { createPost, getCommunity, uploadPostImage } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
 export default function ComposeScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ communityId?: string }>();
+  const communityId = params.communityId ? Number(params.communityId) : undefined;
+  const [communityName, setCommunityName] = useState<string | null>(null);
   const [body, setBody] = useState('');
   const [selectedUris, setSelectedUris] = useState<string[]>([]);
   const uploadedKeys = useRef<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!communityId) return;
+    getCommunity(communityId).then((community) => setCommunityName(community.name))
+      .catch(() => setError('Could not load this community.'));
+  }, [communityId]);
 
   async function chooseImages() {
     try {
@@ -53,7 +62,7 @@ export default function ComposeScreen() {
         uploadedKeys.current[uri] = key;
         imageKeys.push(key);
       }
-      const post = await createPost({ body: text || null, imageKeys });
+      const post = await createPost({ body: text || null, imageKeys, communityId });
       router.replace({ pathname: '/post/[id]', params: { id: String(post.id) } });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not publish the post.');
@@ -73,7 +82,7 @@ export default function ComposeScreen() {
           <View style={styles.back} />
         </View>
         <Text style={styles.title}>Share a moment</Text>
-        <Text style={styles.subtitle}>What has your pet been up to?</Text>
+        <Text style={styles.subtitle}>{communityName ? `Posting in ${communityName}` : 'What has your pet been up to?'}</Text>
         <TextInput style={styles.story} value={body} onChangeText={setBody}
           placeholder="Tell their story..." placeholderTextColor="#9BA59D"
           multiline textAlignVertical="top" maxLength={2000} />

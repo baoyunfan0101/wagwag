@@ -101,7 +101,9 @@ export default function PostDetailScreen() {
         {loading && !post ? <View style={styles.center}><ActivityIndicator size="large" color={colors.accent} /></View> :
           post ? <>
             <PostCard post={post} onLike={() => void toggleLike()} likeBusy={likeBusy}
-              onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(post.petId) } })} />
+              onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(post.petId) } })}
+              onCommunity={post.communityId ? () => router.push({ pathname: '/community/[id]',
+                params: { id: String(post.communityId) } }) : undefined} />
             <Text style={styles.sectionTitle}>Comments</Text>
             {comments.length === 0 && <Text style={styles.empty}>Be the first to say hello.</Text>}
             {comments.map((comment) => <View key={comment.id} style={styles.comment}>

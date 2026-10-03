@@ -86,6 +86,10 @@ export default function ProfileScreen() {
             <Ionicons name="lock-closed-outline" size={18} color={colors.green} />
             <Text style={styles.privacyText}>Privacy and follow requests</Text>
           </Pressable>
+          <Pressable style={styles.privacyButton} onPress={() => router.push('/communities')}>
+            <Ionicons name="people-outline" size={18} color={colors.green} />
+            <Text style={styles.privacyText}>Explore communities</Text>
+          </Pressable>
           <Text style={styles.footer}>Made for the pets who make life better.</Text>
         </> : null}
     </ScrollView>
