@@ -105,14 +105,18 @@ export type TaskEvent = { id: number; actorPetId: number; actorName: string; sta
 export type NearbyTask = { task: PetTask; distanceMeters: number };
 export type NearbyTaskPage = { items: NearbyTask[]; nextPage: number | null };
 export type Conversation = { id: number; petId: number; petName: string; petAvatarUrl: string | null;
-  lastMessage: string | null; updatedAt: string; canMessage: boolean };
+  lastMessage: string | null; updatedAt: string; canMessage: boolean; unreadCount: number;
+  myDeliveredThroughId: number; peerDeliveredThroughId: number; peerReadThroughId: number };
 export type ConversationPage = { items: Conversation[]; nextPage: number | null };
 export type MessageInput = { clientMessageId: string; body: string };
-export type ChatMessage = MessageInput & { id: number; conversationId: number; senderPetId: number; createdAt: string };
+export type ChatMessage = MessageInput & { id: number; conversationId: number; senderPetId: number; createdAt: string;
+  deliveryStatus: 'SENT' | 'DELIVERED' | 'READ' };
 export type MessagePage = { items: ChatMessage[]; nextBeforeId: number | null; nextAfterId: number | null };
 export type PetNotification = { id: number; type: 'MESSAGE' | 'TASK_STATUS'; actorPetId: number; actorName: string;
   targetId: number; taskTitle: string | null; taskStatus: TaskStatus | null; createdAt: string; readAt: string | null };
 export type NotificationPage = { items: PetNotification[]; nextBeforeId: number | null };
+export type UnreadCounts = { messages: number; notifications: number };
+export type PushDeviceStatus = { registered: boolean; serverEnabled: boolean };
 export type Comment = {
   id: number;
   postId: number;
@@ -125,6 +129,7 @@ export type Comment = {
 
 export const DEV_PET_ID = Number(process.env.EXPO_PUBLIC_DEV_PET_ID || '1');
 const baseUrl = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8080').replace(/\/$/, '');
+export const eventsUrl = `${baseUrl.replace(/^http/, 'ws')}/api/events`;
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
@@ -173,6 +178,30 @@ export function getMessages(id: number, options: { beforeId?: number; afterId?: 
 
 export function sendMessage(id: number, input: MessageInput): Promise<ChatMessage> {
   return request<ChatMessage>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function acknowledgeConversation(id: number, throughMessageId: number, read: boolean): Promise<Conversation> {
+  return request<Conversation>(`/api/conversations/${id}/receipt`, {
+    method: 'PUT', body: JSON.stringify({ throughMessageId, read }),
+  });
+}
+
+export function getUnreadCounts(): Promise<UnreadCounts> {
+  return request<UnreadCounts>('/api/notifications/unread');
+}
+
+export function getPushDevice(id: string): Promise<PushDeviceStatus> {
+  return request<PushDeviceStatus>(`/api/notifications/push-devices/${id}`);
+}
+
+export function registerPushDevice(id: string, expoPushToken: string, platform: 'IOS' | 'ANDROID'): Promise<PushDeviceStatus> {
+  return request<PushDeviceStatus>(`/api/notifications/push-devices/${id}`, {
+    method: 'PUT', body: JSON.stringify({ expoPushToken, platform }),
+  });
+}
+
+export function disablePushDevice(id: string): Promise<void> {
+  return request<void>(`/api/notifications/push-devices/${id}`, { method: 'DELETE' });
 }
 
 export function getNotifications(limit = 20, beforeId?: number): Promise<NotificationPage> {

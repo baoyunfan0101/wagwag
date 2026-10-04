@@ -6,9 +6,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { getNotifications, readNotification, type PetNotification } from '@/lib/api';
 import { mergeNotifications } from '@/lib/messageState';
 import { colors } from '@/lib/theme';
+import { useRealtime, useRealtimeRefresh } from '@/lib/RealtimeProvider';
+import { useDevicePush } from '@/lib/DevicePushProvider';
 
 export default function NotificationsScreen() {
   const router = useRouter();
+  const { unread, refreshUnread } = useRealtime();
+  const push = useDevicePush();
   const [items, setItems] = useState<PetNotification[]>([]);
   const [nextBeforeId, setNextBeforeId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +46,19 @@ export default function NotificationsScreen() {
 
   useFocusEffect(useCallback(() => { void load(); return () => { generation.current++; }; }, [load]));
 
+  useRealtimeRefresh(async () => {
+    const current = generation.current;
+    try {
+      const result = await getNotifications();
+      if (current !== generation.current) return;
+      setItems(existing => mergeNotifications(existing, result.items));
+      setNextBeforeId(cursor => cursor ?? result.nextBeforeId);
+      setError(null);
+    } catch {
+      if (current === generation.current) setError('Could not refresh notifications. Try again.');
+    }
+  });
+
   async function loadMore(retry = false) {
     if (nextBeforeId === null || moreBusy.current || loading || refreshing || (moreError && !retry)) return;
     moreBusy.current = true;
@@ -67,6 +84,7 @@ export default function NotificationsScreen() {
       const read = await readNotification(item.id);
       if (current !== generation.current) return;
       setItems(existing => mergeNotifications(existing, [read]));
+      refreshUnread();
       setError(null);
       if (item.type === 'MESSAGE') router.push({ pathname: '/conversation/[id]', params: { id: String(item.targetId) } });
       else router.push({ pathname: '/task/[id]', params: { id: String(item.targetId) } });
@@ -85,6 +103,19 @@ export default function NotificationsScreen() {
             <Ionicons name="arrow-back" size={24} color={colors.ink} />
           </Pressable>
           <Text style={styles.title}>Notifications</Text><View style={{ width: 24 }} />
+        </View>
+        <Text style={styles.note}>{unread.notifications} unread notifications</Text>
+        <View style={styles.card}>
+          <View style={styles.body}>
+            <Text style={styles.name}>Device push</Text>
+            <Text style={styles.note}>{!push.supported ? 'Available in a native build on a physical phone.' :
+              push.status?.registered ? (push.status.serverEnabled ? 'Enabled for this device.' :
+                'Device registered. Server push delivery is not enabled yet.') : 'Enable alerts for messages and task updates.'}</Text>
+            {push.supported && <Pressable onPress={push.status?.registered ? push.pause : push.enable} disabled={push.busy}>
+              <Text style={styles.badge}>{push.busy ? 'Updating...' : push.status?.registered ? 'Pause device push' : 'Enable device push'}</Text>
+            </Pressable>}
+            {push.error && <Text style={styles.error}>{push.error}</Text>}
+          </View>
         </View>
         {loading && <ActivityIndicator color={colors.accent} />}
         {error && <Pressable onPress={() => void load()}><Text style={styles.error}>{error}</Text></Pressable>}

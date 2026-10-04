@@ -858,7 +858,7 @@ The client may poll periodically.
 The current 8A implementation includes direct two-pet conversations, member-only paginated history,
 idempotent text sends, foreground chat polling, and a persisted in-app notification center for
 messages and task status changes. Existing PostgreSQL block rules prevent new messaging; members
-can still read earlier conversation history. Device push, WebSocket, and message receipts remain 8B.
+can still read earlier conversation history. The realtime transport and device delivery build on this REST contract in 8B.
 
 ### Done Criteria
 
@@ -904,6 +904,12 @@ APNs / FCM
    ↓
 Device
 ```
+
+The current 8B implementation uses foreground WebSocket hints with REST catch-up and Redis
+Pub/Sub across instances. PostgreSQL stores unread/read/delivery positions and device push jobs.
+Expo push registration is explicit; workers check tickets/receipts and retry transient failures.
+Integration coverage uses real WebSocket, PostgreSQL, Redis, and a local HTTP push provider.
+Actual APNs/FCM delivery requires an EAS project, provider credentials, and physical-device verification.
 
 ---
 

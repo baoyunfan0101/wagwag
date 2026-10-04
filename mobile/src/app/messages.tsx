@@ -5,9 +5,11 @@ import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, View }
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { getConversations, type Conversation } from '@/lib/api';
 import { colors } from '@/lib/theme';
+import { useRealtime, useRealtimeRefresh } from '@/lib/RealtimeProvider';
 
 export default function MessagesScreen() {
   const router = useRouter();
+  const { unread, connected } = useRealtime();
   const [items, setItems] = useState<Conversation[]>([]);
   const [nextPage, setNextPage] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -38,6 +40,23 @@ export default function MessagesScreen() {
   }, []);
 
   useFocusEffect(useCallback(() => { void load(); return () => { generation.current++; }; }, [load]));
+
+  useRealtimeRefresh(async () => {
+    const current = generation.current;
+    try {
+      const result = await getConversations();
+      if (current !== generation.current) return;
+      setItems(existing => {
+        const byId = new Map(existing.map(item => [item.id, item]));
+        for (const item of result.items) byId.set(item.id, item);
+        return [...byId.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.id - a.id);
+      });
+      setNextPage(page => page ?? result.nextPage);
+      setError(null);
+    } catch {
+      if (current === generation.current) setError('Could not refresh conversations. Try again.');
+    }
+  });
 
   async function loadMore(retry = false) {
     if (nextPage === null || moreBusy.current || loading || refreshing || (moreError && !retry)) return;
@@ -73,6 +92,7 @@ export default function MessagesScreen() {
           </Pressable>
         </View>
         <Text style={styles.note}>Open a pet profile to start a conversation.</Text>
+        <Text style={styles.note}>{unread.messages} unread messages / {connected ? 'Live updates' : 'Checking for updates'}</Text>
         {loading && <ActivityIndicator color={colors.accent} />}
         {error && <Pressable onPress={() => void load()}><Text style={styles.error}>{error}</Text></Pressable>}
       </>}
@@ -85,6 +105,7 @@ export default function MessagesScreen() {
           <Text style={styles.preview} numberOfLines={2}>{item.lastMessage || 'Say hello!'}</Text>
           {!item.canMessage && <Text style={styles.preview}>Messaging unavailable</Text>}
         </View>
+        {item.unreadCount > 0 && <Text style={styles.badge}>{item.unreadCount}</Text>}
         <Ionicons name="chevron-forward" size={18} color={colors.muted} />
       </Pressable>}
       ListEmptyComponent={!loading && !error ? <Text style={styles.note}>No conversations yet.</Text> : null}
@@ -108,4 +129,5 @@ const styles = StyleSheet.create({
   name: { color: colors.ink, fontSize: 17, fontWeight: '800' },
   preview: { color: colors.muted, marginTop: 5, lineHeight: 20 },
   error: { color: '#B23725', marginVertical: 12 },
+  badge: { color: colors.green, backgroundColor: colors.greenPale, borderRadius: 12, padding: 8, fontWeight: '800' },
 });
