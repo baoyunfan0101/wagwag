@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,6 +13,7 @@ import com.wagwag.api.pet.PetRepository;
 import com.wagwag.api.social.SocialPairLock;
 import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.task.TaskService;
+import com.wagwag.api.task.TaskRatingInput;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -66,8 +68,11 @@ class TaskApiIntegrationTest {
         jdbc.update("DELETE FROM pet_mutes");
         jdbc.update("UPDATE pets SET private_profile = FALSE WHERE id = 1000");
         jdbc.update("DELETE FROM task_assignments");
+        jdbc.update("DELETE FROM task_events");
+        jdbc.update("DELETE FROM task_availability");
         jdbc.update("DELETE FROM tasks WHERE id <> 1000");
         jdbc.update("UPDATE tasks SET status = 'OPEN', latitude = 29.760412, longitude = -95.369845 WHERE id = 1000");
+        jdbc.update("INSERT INTO task_events (task_id, actor_pet_id, status) VALUES (1000, 1000, 'OPEN')");
     }
 
     @Test
@@ -310,6 +315,165 @@ class TaskApiIntegrationTest {
             .andExpect(jsonPath("$.items[0].id").value(1000));
         mvc.perform(get("/api/tasks/1000")).andExpect(status().isOk());
         mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+    }
+
+    @Test
+    void nearbyUsesCoarsePublicLocationAndExactCreatorLocation() throws Exception {
+        String body = mvc.perform(get("/api/tasks/nearby").param("latitude", "29.76")
+                .param("longitude", "-95.37").param("radiusMeters", "10"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items[0].task.id").value(1000))
+            .andExpect(jsonPath("$.items[0].task.locationExact").value(false))
+            .andExpect(jsonPath("$.items[0].distanceMeters").value(0.0))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(body).doesNotContain("29.760412", "-95.369845");
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "29.760412")
+                .param("longitude", "-95.369845").param("radiusMeters", "1"))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        long ownTask = createTask();
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "29.760412")
+                .param("longitude", "-95.369845").param("radiusMeters", "1"))
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].task.id").value(ownTask))
+            .andExpect(jsonPath("$.items[0].task.locationExact").value(true));
+    }
+
+    @Test
+    void nearbySortsPaginatesAndExcludesUnavailableTasks() throws Exception {
+        long near = fixtureTask(29.77, -95.37);
+        fixtureTask(29.79, -95.37);
+        long cancelled = fixtureTask(29.76, -95.37);
+        jdbc.update("UPDATE tasks SET status = 'CANCELLED' WHERE id = ?", cancelled);
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "29.76").param("longitude", "-95.37")
+                .param("radiusMeters", "3000").param("limit", "1"))
+            .andExpect(jsonPath("$.items[0].task.id").value(1000))
+            .andExpect(jsonPath("$.nextPage").value(1));
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "29.76").param("longitude", "-95.37")
+                .param("radiusMeters", "3000").param("limit", "1").param("page", "1"))
+            .andExpect(jsonPath("$.items[0].task.id").value(near))
+            .andExpect(jsonPath("$.nextPage").value((Object) null));
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1000, 1)");
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "29.76").param("longitude", "-95.37"))
+            .andExpect(jsonPath("$.items.length()").value(0));
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "NaN").param("longitude", "0"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/tasks/nearby").param("latitude", "0").param("longitude", "0")
+                .param("radiusMeters", "20001"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void participantsHaveCompleteOrderedHistoryWithoutDuplicateEvents() throws Exception {
+        mvc.perform(get("/api/tasks/1000/history")).andExpect(status().isNotFound());
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/start")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/complete")).andExpect(status().isOk());
+        mvc.perform(get("/api/tasks/1000/history"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.length()").value(4))
+            .andExpect(jsonPath("$[0].status").value("OPEN"))
+            .andExpect(jsonPath("$[1].status").value("ACCEPTED"))
+            .andExpect(jsonPath("$[2].status").value("IN_PROGRESS"))
+            .andExpect(jsonPath("$[3].status").value("COMPLETED"));
+        mvc.perform(post("/api/tasks/1000/start")).andExpect(status().isConflict());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_events WHERE task_id = 1000", Long.class))
+            .isEqualTo(4);
+        long own = createTask();
+        mvc.perform(post("/api/tasks/{id}/cancel", own)).andExpect(status().isOk());
+        mvc.perform(get("/api/tasks/{id}/history", own))
+            .andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[1].status").value("CANCELLED"));
+    }
+
+    @Test
+    void availabilityOnlyPreventsNewAcceptances() throws Exception {
+        mvc.perform(get("/api/tasks/profile"))
+            .andExpect(jsonPath("$.acceptingTasks").value(true))
+            .andExpect(jsonPath("$.ratingCount").value(0));
+        mvc.perform(put("/api/tasks/availability").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"acceptingTasks\":false}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.acceptingTasks").value(false));
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isConflict());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_assignments", Long.class)).isZero();
+        mvc.perform(put("/api/tasks/availability").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"acceptingTasks\":true}"))
+            .andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        mvc.perform(put("/api/tasks/availability").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"acceptingTasks\":false}"))
+            .andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/start")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/complete")).andExpect(status().isOk());
+    }
+
+    @Test
+    void onlyCreatorCanRateCompletedTaskAndRatingsCountOnce() throws Exception {
+        long own = createTask();
+        mvc.perform(put("/api/tasks/{id}/rating", own).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"score\":5}"))
+            .andExpect(status().isConflict());
+        jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (?, 1000)", own);
+        jdbc.update("UPDATE tasks SET status = 'COMPLETED' WHERE id = ?", own);
+        mvc.perform(put("/api/tasks/{id}/rating", own).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"score\":4,\"comment\":\"  Helpful  \"}"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.rating.score").value(4))
+            .andExpect(jsonPath("$.rating.comment").value("Helpful"));
+        mvc.perform(put("/api/tasks/{id}/rating", own).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"score\":5}"))
+            .andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_ratings WHERE task_id = ?", Long.class, own))
+            .isEqualTo(1);
+        mvc.perform(put("/api/tasks/{id}/rating", own).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"score\":6}"))
+            .andExpect(status().isBadRequest());
+        assertThatThrownBy(() -> jdbc.update("UPDATE task_ratings SET score = 6 WHERE task_id = ?", own))
+            .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/start")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/complete")).andExpect(status().isOk());
+        mvc.perform(put("/api/tasks/1000/rating").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"score\":5}"))
+            .andExpect(status().isForbidden());
+        TaskService creator = new TaskService(jdbc, pets, social, pairLock, 1000);
+        transactions.executeWithoutResult(status -> creator.rate(1000, new TaskRatingInput(4, "Great walk")));
+        mvc.perform(get("/api/tasks/profile"))
+            .andExpect(jsonPath("$.averageRating").value(4.0))
+            .andExpect(jsonPath("$.ratingCount").value(1));
+    }
+
+    @Test
+    void concurrentSamePetAcceptanceReturnsSameAssignmentAndOneEvent() throws Exception {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch go = new CountDownLatch(1);
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            java.util.concurrent.Callable<Void> accept = () -> {
+                ready.countDown();
+                go.await();
+                mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.assigneePetId").value(1));
+                return null;
+            };
+            Future<Void> first = executor.submit(accept);
+            Future<Void> second = executor.submit(accept);
+            ready.await();
+            go.countDown();
+            first.get();
+            second.get();
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_assignments WHERE task_id = 1000", Long.class))
+            .isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_events WHERE task_id = 1000 AND status = 'ACCEPTED'",
+            Long.class)).isEqualTo(1);
+    }
+
+    private long fixtureTask(double latitude, double longitude) {
+        return jdbc.queryForObject("INSERT INTO tasks (creator_pet_id, title, description, category, latitude, longitude) "
+            + "VALUES (1000, 'Nearby help', 'Walk a dog', 'DOG_WALKING', ?, ?) RETURNING id", Long.class,
+            latitude, longitude);
     }
 
     private long createTask() throws Exception {

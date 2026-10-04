@@ -5,6 +5,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Component
 @Profile("dev")
@@ -14,6 +15,7 @@ public class DevelopmentSeed implements ApplicationRunner {
     public DevelopmentSeed(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
     @Override
+    @Transactional
     public void run(ApplicationArguments args) {
         jdbc.update("INSERT INTO users (id, display_name) "
             + "VALUES (1, 'WagWag Developer') ON CONFLICT (id) DO NOTHING");
@@ -27,9 +29,12 @@ public class DevelopmentSeed implements ApplicationRunner {
             + "VALUES (1000, 1000, 'Biscuit', 'Dog', 'Corgi', 'UNKNOWN', "
             + "'A friendly neighbor ready to make new pet friends.') ON CONFLICT (id) DO NOTHING");
 
-        jdbc.update("INSERT INTO tasks (id, creator_pet_id, title, description, category, latitude, longitude) "
+        int taskInserted = jdbc.update("INSERT INTO tasks (id, creator_pet_id, title, description, category, latitude, longitude) "
             + "VALUES (1000, 1000, 'Walk Biscuit', 'A short neighborhood walk for Biscuit.', "
             + "'DOG_WALKING', 29.7604, -95.3698) ON CONFLICT (id) DO NOTHING");
+        if (taskInserted > 0) {
+            jdbc.update("INSERT INTO task_events (task_id, actor_pet_id, status) VALUES (1000, 1000, 'OPEN')");
+        }
 
         jdbc.queryForObject("SELECT setval('users_id_seq', GREATEST((SELECT MAX(id) FROM users), "
             + "(SELECT last_value FROM users_id_seq)), true)", Long.class);
