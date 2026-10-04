@@ -35,7 +35,11 @@ Follow and unfollow requests are idempotent. Following a private pet creates a p
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/api/posts/media-uploads` | Request a 10-minute upload URL for a post image |
-| POST | `/api/posts/video-uploads` | Request a 10-minute upload URL for a post video |
+| POST | `/api/posts/video-uploads` | Create an owned video upload and a 10-minute create-only ticket |
+| GET | `/api/posts/video-uploads/{uuid}` | Read the active pet's upload/processing state |
+| POST | `/api/posts/video-uploads/{uuid}/complete` | Verify the source object and queue processing (idempotent) |
+| POST | `/api/posts/video-uploads/{uuid}/retry` | Retry a failed transient processing job using the same source |
+| POST | `/api/posts/video-uploads/{uuid}/ticket` | Renew the same create-only ticket while still uploading |
 | POST | `/api/posts` | Create a text, photo, or video post |
 | GET | `/api/posts/{id}` | Read a post |
 | GET | `/api/feed?limit=20` | Read the first page of posts, newest first |
@@ -48,9 +52,21 @@ Follow and unfollow requests are idempotent. Following a private pet creates a p
 
 To add photos, request a ticket with `{ "contentType": "image/jpeg" }` at `/api/posts/media-uploads`, PUT each image to its `uploadUrl` using all returned `headers`, then create a post with `{ "body": "Hello!", "imageKeys": ["pets/1/posts/...jpg"] }`. Text-only posts use an empty `imageKeys` list. Post-image upload tickets use unique keys and conditional, create-only writes; reusing a ticket cannot overwrite an existing object. Up to four distinct images are allowed; each must be JPEG, PNG, or WebP and no larger than 5 MB. The API verifies object metadata before saving the post. Responses include ordered `imageUrls`. PostgreSQL stores image URLs, not image bytes. Set `S3_PUBLIC_BASE_URL` to a public bucket or CDN prefix when deploying.
 
-A post may contain text, up to four photos, or one video, with an optional caption. Photos and video cannot be combined. Request a video ticket with `{ "contentType": "video/mp4" }`, PUT the file using **all** returned `headers`, then publish `{ "body": "A park moment", "videoKey": "pets/1/posts/videos/...mp4" }`. MP4 (`video/mp4`), MOV (`video/quicktime`), and WebM (`video/webm`) are accepted, with a non-zero size of at most 50 MB. Video tickets are create-only: signed `If-None-Match: *` prevents replacing an existing object. Keep a successfully uploaded key when retrying a failed publish; do not repeat its PUT. The backend verifies the pet namespace, object existence, MIME type, and size before persisting a post. Direct public media URLs are not accepted as post input.
+A post may contain text, up to four photos, or one video, with an optional caption. Photos and video cannot be combined. MP4 (`video/mp4`), MOV (`video/quicktime`), and WebM (`video/webm`) are accepted, with a non-zero source size of at most 50 MB. Direct public media URLs are not accepted as post input.
 
-Post responses include ordered `imageUrls` and nullable `videoUrl`. A video post has an empty `imageUrls` list. Video posts use the same feed pagination, likes, comments, and social/community visibility rules as photos. Module 9A plays the original uploaded file; it does not transcode, generate thumbnails, or validate codecs. MP4 with H.264/AAC is the most portable choice; actual playback support depends on the device/browser.
+Video publishing follows these steps:
+
+1. Request a ticket with `{ "contentType": "video/mp4" }`. Keep its `id` (UUID) and `key`; the response also contains `uploadUrl` and required `headers`.
+2. PUT the file using **all** returned headers. Signed `If-None-Match: *` prevents replacing the source object. Upload progress reports bytes sent, not processing completion.
+3. POST `/api/posts/video-uploads/{id}/complete`. The backend checks namespace, MIME type, existence, and size before queuing the job. Repeating completion does not create another job.
+4. Poll GET `/api/posts/video-uploads/{id}`. States are `UPLOADING`, `QUEUED`, `PROCESSING`, `READY`, or `FAILED`; the response includes `id`, `key`, `status`, `error`, and nullable `videoUrl`/`thumbnailUrl`. Only READY returns processed media URLs.
+5. Once READY, publish `{ "body": "A park moment", "videoKey": "pets/1/posts/videos/...mp4" }`. Publishing before processing finishes returns 409; publication still verifies the source and processed object metadata.
+
+Processing produces H.264/yuv420p MP4 with AAC when the source has audio, a maximum 1280 x 720 bounding box (no video upscaling), fast-start metadata, and a 320-pixel JPEG thumbnail. Output video remains limited to 50 MB. Output keys are unique per processing attempt, use create-only writes, and have immutable one-year cache headers. Set `MEDIA_PUBLIC_BASE_URL` to a configured bucket/CDN prefix for processed video and thumbnails; otherwise they use `S3_PUBLIC_BASE_URL`. Upload/verification always use the S3 origin. CDN provisioning is separate from the application.
+
+Transient processing failures retry up to three attempts with backoff; jobs survive API restarts, and expired processing leases can be reclaimed. `FAILED` jobs can be explicitly retried without re-uploading. `INVALID_VIDEO` and `VIDEO_TOO_LARGE` require selecting another file. Raw provider/FFmpeg errors are not exposed. If a PUT response is lost, attempt completion before repeating the upload; a missing object can use a renewed ticket for the same key. Keep an already uploaded key/job across processing and publish retries. Abandoning the composer stops foreground upload/polling; there is no durable mobile upload draft or orphan-object cleanup in this module.
+
+Post responses include ordered `imageUrls`, nullable `videoUrl`, and nullable `videoThumbnailUrl`. Video posts use processed media, have an empty `imageUrls` list, and retain the same pagination, likes, comments, and social/community visibility as photos. The thumbnail appears before on-demand playback. Previewing a selected source still depends on local device codecs; published videos use the normalized format. Actual device playback requires the checks in the development guide.
 
 The feed returns `{ "items": [...], "nextCursor": "..." }` in chronological newest-first order, with ID as the tie-breaker. `limit` defaults to 20 and must be between 1 and 50. A null `nextCursor` means there are no more posts. Clients should pass the cursor back unchanged and treat it as opaque.
 

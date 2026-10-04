@@ -8,6 +8,8 @@ import com.wagwag.api.social.PetFollowRepository;
 import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.storage.PostImageStorage;
 import com.wagwag.api.storage.PostVideoStorage;
+import com.wagwag.api.storage.PostVideoStorage.VideoTicket;
+import com.wagwag.api.storage.PostVideoStorage.VideoState;
 import com.wagwag.api.storage.S3Objects.UploadTicket;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -18,6 +20,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -77,9 +80,9 @@ public class PostService {
         if (input.communityId() != null) communities.requireMember(input.communityId(), pet.getId());
         List<String> urls = new ArrayList<>();
         for (String key : keys) urls.add(storage.verifyAndGetUrl(pet.getId(), key));
-        String videoUrl = videoKey == null ? null : videos.verifyAndGetUrl(pet.getId(), videoKey);
+        var video = videoKey == null ? null : videos.verifyAndGetAsset(pet.getId(), videoKey);
 
-        Post post = posts.saveAndFlush(new Post(pet, body, videoUrl));
+        Post post = posts.saveAndFlush(new Post(pet, body, video == null ? null : video.videoUrl(), video == null ? null : video.thumbnailUrl()));
         if (input.communityId() != null) communities.attach(post.getId(), input.communityId());
         for (int index = 0; index < urls.size(); index++) {
             media.save(new PostMedia(post, urls.get(index), index));
@@ -93,10 +96,22 @@ public class PostService {
         return storage.prepare(actor().getId(), contentType);
     }
 
-    @Transactional(readOnly = true)
-    public UploadTicket prepareVideo(String contentType) {
+    @Transactional
+    public VideoTicket prepareVideo(String contentType) {
         return videos.prepare(actor().getId(), contentType);
     }
+
+    @Transactional(readOnly = true)
+    public VideoState videoState(UUID id) { return videos.get(actor().getId(), id); }
+
+    @Transactional
+    public VideoState completeVideo(UUID id) { return videos.complete(actor().getId(), id); }
+
+    @Transactional
+    public VideoState retryVideo(UUID id) { return videos.retry(actor().getId(), id); }
+
+    @Transactional
+    public VideoTicket renewVideo(UUID id) { return videos.renew(actor().getId(), id); }
 
     @Transactional(readOnly = true)
     public PostResponse get(long id) { return response(visiblePost(id)); }
@@ -158,7 +173,7 @@ public class PostService {
             CommunityLabel label = labels.get(id);
             return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
                 label == null ? null : label.id(), label == null ? null : label.name(),
-                post.getBody(), urls, post.getVideoUrl(), post.getCreatedAt(),
+                post.getBody(), urls, post.getVideoUrl(), post.getVideoThumbnailUrl(), post.getCreatedAt(),
                 likeCounts.getOrDefault(id, 0L), commentCounts.getOrDefault(id, 0L), likedIds.contains(id));
         }).toList();
         Post last = selected.getLast();
@@ -203,7 +218,7 @@ public class PostService {
         CommunityLabel label = communities.labels(List.of(id)).get(id);
         return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
             label == null ? null : label.id(), label == null ? null : label.name(),
-            post.getBody(), urls, post.getVideoUrl(), post.getCreatedAt(), likes.countByPost_Id(id),
+            post.getBody(), urls, post.getVideoUrl(), post.getVideoThumbnailUrl(), post.getCreatedAt(), likes.countByPost_Id(id),
             comments.countByPost_Id(id),
             devPetId > 0 && likes.existsByPost_IdAndPet_Id(id, devPetId));
     }

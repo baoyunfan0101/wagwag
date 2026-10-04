@@ -19,7 +19,9 @@ The project version is `0.0.1` while pre-v1. Native build directories and `.env`
 
 ## Local startup
 
-Requirements: Java 21, Node.js 24, npm, Docker Desktop, and Make (optional).
+Requirements: Java 21, Node.js 24, npm, Docker Desktop, FFmpeg/FFprobe (with libx264 and AAC), and Make (optional).
+
+Install FFmpeg with `brew install ffmpeg` on macOS or `sudo apt-get install ffmpeg` on Debian/Ubuntu. Keep `ffmpeg` and `ffprobe` on PATH for integration tests. `FFMPEG_BIN` selects the backend executable if needed. GitHub Actions installs FFmpeg before running backend tests.
 
 ~~~sh
 cp backend/.env.example backend/.env
@@ -71,7 +73,15 @@ docker compose up -d postgres
 
 These commands delete local PostgreSQL data, including walks, messages, posts, and profiles. They preserve SeaweedFS data. If you set `COMPOSE_PROJECT_NAME`, replace the volume name with that project's PostgreSQL volume. No application command deletes this data automatically.
 
-The current baseline includes `posts.video_url` for Module 9A. Reset an older local PostgreSQL volume before using this code. Starting with v1, the committed schema becomes production history; later schema changes use incremental Flyway migrations, and released API compatibility is evaluated explicitly.
+The current baseline includes `video_uploads` and `posts.video_thumbnail_url` for Module 9B. Reset an older local PostgreSQL volume before using this code. Starting with v1, the committed schema becomes production history; later schema changes use incremental Flyway migrations, and released API compatibility is evaluated explicitly.
+
+## Video processing and media delivery
+
+`VIDEO_PROCESSING_ENABLED=true` enables the PostgreSQL-backed video worker (the default). The API process needs FFmpeg, writable temporary disk, and access to the S3 origin. Processing runs outside database transactions; short claims use `SKIP LOCKED`, with a ten-minute lease and a token preventing stale workers from replacing the winning output. Worker retries are bounded to three attempts, with processing timeouts. Temporary files are removed after each attempt. Multiple API instances can claim different jobs. The scheduler has two threads so video conversion does not block the push worker.
+
+Set `MEDIA_PUBLIC_BASE_URL` to a public CDN/bucket prefix that resolves the processed keys unchanged. Leave it blank for local SeaweedFS delivery through `S3_PUBLIC_BASE_URL`. The application emits immutable, cacheable video/thumbnail URLs; it does not create a cloud CDN distribution. Configure HTTPS, media GET/HEAD and range requests, and browser CORS on the delivery service. Raw upload PUTs continue using the S3 origin and all returned signed headers. The local SeaweedFS gateway supports the create-only presigned PUT protocol used for both source and output objects.
+
+The [API guide](API.md#posts-and-feed) describes completion, status polling, and retry. Upload polling stops when the composer is left, while a queued backend job can finish independently. No mobile crash recovery, output lifecycle cleanup, or multi-worker fleet provisioning is included.
 
 ## Native builds and maps
 
@@ -103,7 +113,7 @@ cd mobile && npm run typecheck
 cd mobile && npm test
 ~~~
 
-`make check-backend` and `make check-mobile` run the same jobs as GitHub Actions. Backend integration tests create isolated PostGIS, SeaweedFS, and Redis Testcontainers and require a running Docker daemon; they do not use or reset Compose volumes. Mobile tests use the Node.js 24 test runner. Typecheck does not compile or verify native SDKs.
+`make check-backend` and `make check-mobile` run the same jobs as GitHub Actions. Backend integration tests create isolated PostGIS, SeaweedFS, and Redis Testcontainers and require a running Docker daemon plus FFmpeg/FFprobe; they do not use or reset Compose volumes. Mobile tests use the Node.js 24 test runner. Typecheck does not compile or verify native SDKs.
 
 To check JavaScript bundles for all supported platforms:
 
@@ -119,4 +129,4 @@ For native verification, start a walk with background recording enabled on a dev
 
 For native verification, enable push on a configured phone, exchange messages with the other development pet, and check live updates, foreground delivery, read status, unread badges, reconnect catch-up, background alerts, and notification-tap navigation. Pause push and verify further alerts stop. Integration tests use real WebSocket/Redis and a local HTTP push provider; APNs/FCM delivery still requires this configured device check.
 
-For video, select a small MP4, preview it, publish, reopen it in Feed and post detail, play/pause/seek/fullscreen, and verify playback stops when leaving the screen, scrolling the card off screen, or backgrounding the app. Try unsupported/oversized files and retry a publish failure using the completed upload key. MOV/WebM availability depends on device codecs. Native device playback, GPS/background behavior, and APNs/FCM delivery require configured hardware; bundle export and browser checks do not establish those results.
+For video, select small MP4/MOV/WebM files, verify byte-upload progress followed by queued/processing state, publish, and confirm the generated thumbnail in Feed and post detail. Play/pause/seek/fullscreen and verify playback stops when leaving the screen, scrolling the card off screen, or backgrounding. Interrupt upload/API connectivity and retry with the same job; successfully uploaded bytes must not be sent twice. Try an invalid file and a transient processor failure, then retry processing without another PUT. A selected source preview can still depend on device codecs; published files are normalized to H.264/AAC. Native playback/upload progress, GPS/background behavior, and APNs/FCM delivery require configured hardware; bundle export and browser checks do not establish those results.

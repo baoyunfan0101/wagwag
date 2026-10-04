@@ -5,6 +5,9 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.net.URI;
 import java.util.List;
+import java.util.UUID;
+import com.wagwag.api.storage.PostVideoStorage.VideoTicket;
+import com.wagwag.api.storage.PostVideoStorage.VideoState;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,9 +38,21 @@ public class PostController {
     }
 
     @PostMapping("/posts/video-uploads")
-    public UploadTicket prepareVideo(@Valid @RequestBody VideoUploadInput input) {
+    public VideoTicket prepareVideo(@Valid @RequestBody VideoUploadInput input) {
         return service.prepareVideo(input.contentType());
     }
+
+    @GetMapping("/posts/video-uploads/{uploadId}")
+    public VideoState videoState(@PathVariable UUID uploadId) { return service.videoState(uploadId); }
+
+    @PostMapping("/posts/video-uploads/{uploadId}/complete")
+    public VideoState completeVideo(@PathVariable UUID uploadId) { return service.completeVideo(uploadId); }
+
+    @PostMapping("/posts/video-uploads/{uploadId}/retry")
+    public VideoState retryVideo(@PathVariable UUID uploadId) { return service.retryVideo(uploadId); }
+
+    @PostMapping("/posts/video-uploads/{uploadId}/ticket")
+    public VideoTicket renewVideo(@PathVariable UUID uploadId) { return service.renewVideo(uploadId); }
 
     @GetMapping("/posts/{id}")
     public PostResponse get(@PathVariable long id) { return service.get(id); }

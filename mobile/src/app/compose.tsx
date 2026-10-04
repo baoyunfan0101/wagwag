@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { createPost, getCommunity, uploadPostImage, uploadPostVideo } from '@/lib/api';
 import { PostVideo } from '@/components/PostVideo';
 import { validateVideoSize, videoContentType } from '@/lib/postVideo';
+import type { VideoDraft, VideoProgress } from '@/lib/videoUploadFlow';
 import { colors } from '@/lib/theme';
 
 export default function ComposeScreen() {
@@ -19,12 +20,21 @@ export default function ComposeScreen() {
   const [selectedUris, setSelectedUris] = useState<string[]>([]);
   const uploadedKeys = useRef<Record<string, string>>({});
   const [video, setVideo] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const videoDraft = useRef<VideoDraft>({ uploaded: false });
+  const mounted = useRef(true);
+  const uploadAbort = useRef<AbortController | null>(null);
+  const [videoProgress, setVideoProgress] = useState<VideoProgress | null>(null);
   const videoKey = useRef<string | undefined>(undefined);
   const choosingRef = useRef(false);
   const savingRef = useRef(false);
   const [choosing, setChoosing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; uploadAbort.current?.abort(); };
+  }, []);
 
   useEffect(() => {
     if (!communityId) return;
@@ -67,6 +77,8 @@ export default function ComposeScreen() {
       videoContentType(asset);
       if (asset.fileSize !== undefined) validateVideoSize(asset.fileSize);
       videoKey.current = undefined;
+      videoDraft.current = { uploaded: false };
+      setVideoProgress(null);
       setVideo(asset);
       setError(null);
     } catch (cause) {
@@ -91,13 +103,22 @@ export default function ComposeScreen() {
         uploadedKeys.current[uri] = key;
         imageKeys.push(key);
       }
-      if (video && !videoKey.current) videoKey.current = await uploadPostVideo(video);
+      if (video && !videoKey.current) {
+        const controller = new AbortController();
+        uploadAbort.current = controller;
+        videoKey.current = await uploadPostVideo(video, videoDraft.current, value => { if (mounted.current) setVideoProgress(value); }, controller.signal);
+        uploadAbort.current = null;
+      }
+      if (!mounted.current) return;
       const post = await createPost({ body: text || null, imageKeys, videoKey: videoKey.current, communityId });
+      if (!mounted.current) return;
       router.replace({ pathname: '/post/[id]', params: { id: String(post.id) } });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not publish the post.');
+      if (mounted.current) setError(uploadAbort.current?.signal.aborted ? 'Upload paused. Retry to continue with this video.'
+        : cause instanceof Error ? cause.message : 'Could not publish the post.');
     } finally {
-      setSaving(false);
+      uploadAbort.current = null;
+      if (mounted.current) setSaving(false);
       savingRef.current = false;
     }
   }
@@ -133,7 +154,7 @@ export default function ComposeScreen() {
             </Pressable>
           </View>)}</View>}
         <Text style={styles.label}>Or one video</Text>
-        <Text style={styles.videoNote}>MP4, MOV, or WebM / up to 50 MB. MP4 works best across devices.</Text>
+        <Text style={styles.videoNote}>MP4, MOV, or WebM / up to 50 MB. Videos are optimized before publishing.</Text>
         <Pressable style={styles.photoButton} onPress={() => void chooseVideo()}
           disabled={saving || choosing || selectedUris.length > 0} accessibilityLabel="Choose post video">
           <Ionicons name="videocam-outline" size={20} color={colors.accent} />
@@ -142,10 +163,19 @@ export default function ComposeScreen() {
         {choosing && <ActivityIndicator color={colors.accent} />}
         {video && <View>
           <PostVideo key={video.uri} uri={video.uri} />
-          <Pressable disabled={saving || choosing} onPress={() => { setVideo(null); videoKey.current = undefined; }} accessibilityLabel="Remove video">
+          <Pressable disabled={saving || choosing} onPress={() => { setVideo(null); videoKey.current = undefined; videoDraft.current = { uploaded: false }; setVideoProgress(null); }} accessibilityLabel="Remove video">
             <Text style={styles.removeVideo}>Remove video</Text>
           </Pressable>
         </View>}
+        {videoProgress && <Text style={styles.videoNote} accessibilityLiveRegion="polite">
+          {videoProgress.stage === 'uploading' ? `Uploading video: ${videoProgress.percent ?? 0}%`
+            : videoProgress.stage === 'queued' ? 'Video uploaded. Waiting for processing...'
+            : videoProgress.stage === 'processing' ? 'Optimizing video and generating thumbnail...'
+            : 'Video ready to publish.'}
+        </Text>}
+        {saving && video && videoProgress?.stage !== 'ready' && <Pressable onPress={() => uploadAbort.current?.abort()} accessibilityLabel="Cancel video upload">
+          <Text style={styles.removeVideo}>Cancel upload</Text>
+        </Pressable>}
         {error && <Text style={styles.error}>{error}</Text>}
         <Pressable style={[styles.publish, (saving || choosing) && styles.disabled]} onPress={() => void publish()} disabled={saving || choosing}>
           {saving ? <ActivityIndicator color="white" /> : <>

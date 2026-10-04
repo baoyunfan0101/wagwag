@@ -38,7 +38,7 @@ export function PostCard({ post, onOpen, onPet, onCommunity, onLike, likeBusy = 
     {onOpen ? <Pressable onPress={onOpen} accessibilityLabel={`View post by ${post.petName}`}>
       {content}
     </Pressable> : <View>{content}</View>}
-    {post.videoUrl && <PostVideo key={post.videoUrl} uri={post.videoUrl} visible={videoVisible} />}
+    {post.videoUrl && <PostVideo key={post.videoUrl} uri={post.videoUrl} thumbnailUrl={post.videoThumbnailUrl} visible={videoVisible} />}
     <View style={styles.actions}>
       <Pressable style={styles.action} onPress={onLike} disabled={likeBusy}
         accessibilityLabel={post.likedByMe ? 'Unlike post' : 'Like post'}>

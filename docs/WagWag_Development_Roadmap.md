@@ -927,7 +927,7 @@ Implemented: one video or up to four photos per post, create-only S3 upload,
 metadata verification, and on-demand playback in Feed, post detail, and
 community posts. MP4/MOV/WebM uploads are limited to 50 MB. Native codec
 playback still needs the device checks in [DEVELOPMENT.md](DEVELOPMENT.md).
-Phase 9B processing, thumbnails, and CDN delivery remain future work.
+Phase 9B adds the processing pipeline described below.
 
 Features:
 
@@ -943,7 +943,15 @@ Do not build a full TikTok-like feed yet.
 
 ## Phase 9B — Complete Solution
 
-Add:
+Implemented: PostgreSQL-backed asynchronous processing, normalized H.264/AAC
+MP4 output, compression, JPEG thumbnails, upload progress, and retry using the
+same source object/job. Source and processed keys remain create-only.
+`MEDIA_PUBLIC_BASE_URL` supports configured CDN delivery with immutable cache
+headers; cloud CDN provisioning and native device checks remain deployment
+verification steps. See [API.md](API.md#posts-and-feed) and
+[DEVELOPMENT.md](DEVELOPMENT.md#video-processing-and-media-delivery).
+
+Features:
 
 ```text
 object storage
@@ -956,7 +964,7 @@ upload progress
 retry
 ```
 
-Potential future architecture:
+Current processing architecture:
 
 ```text
 Upload

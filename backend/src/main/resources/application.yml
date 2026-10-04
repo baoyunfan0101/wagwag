@@ -15,12 +15,20 @@ spring:
   jackson:
     deserialization:
       fail-on-unknown-properties: true
+  task:
+    scheduling:
+      pool:
+        size: 2
   jpa:
     hibernate:
       ddl-auto: validate
     open-in-view: false
 
 app:
+  video:
+    processing-enabled: ${VIDEO_PROCESSING_ENABLED:true}
+    ffmpeg: ${FFMPEG_BIN:ffmpeg}
+    media-base-url: ${MEDIA_PUBLIC_BASE_URL:}
   realtime:
     redis-enabled: ${REALTIME_REDIS_ENABLED:false}
   push:
