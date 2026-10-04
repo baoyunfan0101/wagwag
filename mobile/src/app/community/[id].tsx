@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PostCard } from '@/components/PostCard';
+import { usePostVisibility } from '@/lib/usePostVisibility';
 import {
   getCommunity, getCommunityFeed, joinCommunity, leaveCommunity, likePost, unlikePost, removeCommunityPost,
   type Community, type Post,
@@ -11,6 +12,7 @@ import {
 import { colors } from '@/lib/theme';
 
 export default function CommunityScreen() {
+  const { visiblePosts, viewabilityConfig, onViewableItemsChanged } = usePostVisibility();
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const communityId = Number(id);
@@ -111,6 +113,7 @@ export default function CommunityScreen() {
 
   return <SafeAreaView style={styles.safe}>
     <FlatList data={posts} keyExtractor={(post) => String(post.id)} contentContainerStyle={styles.content}
+      extraData={visiblePosts} viewabilityConfig={viewabilityConfig} onViewableItemsChanged={onViewableItemsChanged}
       refreshing={refreshing} onRefresh={() => void loadFirst(true)}
       onEndReached={() => void loadMore()} onEndReachedThreshold={0.5}
       ListHeaderComponent={<>
@@ -152,7 +155,7 @@ export default function CommunityScreen() {
         </View>}
       </>}
       renderItem={({ item }) => <View>
-        <PostCard post={item}
+        <PostCard post={item} videoVisible={visiblePosts.has(item.id)}
           onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
           onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.petId) } })}
           onLike={() => void toggleLike(item)} likeBusy={busyLikeId === item.id} />

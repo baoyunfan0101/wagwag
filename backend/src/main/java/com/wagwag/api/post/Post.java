@@ -27,6 +27,9 @@ public class Post {
     @Column(length = 2000)
     private String body;
 
+    @Column(name = "video_url", length = 2048)
+    private String videoUrl;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -36,8 +39,13 @@ public class Post {
     protected Post() {}
 
     public Post(Pet pet, String body) {
+        this(pet, body, null);
+    }
+
+    public Post(Pet pet, String body, String videoUrl) {
         this.pet = pet;
         this.body = body;
+        this.videoUrl = videoUrl;
     }
 
     @PrePersist
@@ -46,5 +54,6 @@ public class Post {
     public Long getId() { return id; }
     public Pet getPet() { return pet; }
     public String getBody() { return body; }
+    public String getVideoUrl() { return videoUrl; }
     public Instant getCreatedAt() { return createdAt; }
 }

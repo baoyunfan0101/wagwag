@@ -6,6 +6,6 @@ import java.util.List;
 public record PostResponse(
     Long id, Long petId, String petName, String petAvatarUrl,
     Long communityId, String communityName, String body,
-    List<String> imageUrls, Instant createdAt,
+    List<String> imageUrls, String videoUrl, Instant createdAt,
     long likeCount, long commentCount, boolean likedByMe
 ) {}

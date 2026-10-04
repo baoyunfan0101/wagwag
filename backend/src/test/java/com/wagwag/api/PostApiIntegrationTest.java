@@ -86,6 +86,7 @@ class PostApiIntegrationTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.body").value("A new walk today"))
             .andExpect(jsonPath("$.petName").value("Mochi"))
+            .andExpect(jsonPath("$.videoUrl").value((Object) null))
             .andExpect(jsonPath("$.imageUrls.length()").value(0))
             .andExpect(jsonPath("$.imageUrl").doesNotExist());
         mvc.perform(get("/api/feed"))
@@ -306,6 +307,116 @@ class PostApiIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts", Long.class)).isZero();
     }
 
+    @Test
+    void videoUploadPublishesInFeedAndCannotBeReplaced() throws Exception {
+        String ticket = videoTicket("video/mp4");
+        String key = JsonPath.read(ticket, "$.key");
+        String url = JsonPath.read(ticket, "$.publicUrl");
+        byte[] original = new byte[] {1, 2, 3, 4};
+        assertThat(upload(ticket, original)).isBetween(200, 299);
+        // A create-only ticket cannot be reused even before the post is published.
+        assertThat(upload(ticket, new byte[] {9, 8, 7})).isGreaterThanOrEqualTo(300);
+        long id = createPost("{\"body\":\"A video moment\",\"videoKey\":\"" + key + "\"}");
+        mvc.perform(get("/api/posts/{id}", id)).andExpect(jsonPath("$.videoUrl").value(url))
+            .andExpect(jsonPath("$.imageUrls.length()").value(0));
+        mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items[0].videoUrl").value(url));
+        mvc.perform(post("/api/posts/{id}/likes", id)).andExpect(jsonPath("$.likeCount").value(1))
+            .andExpect(jsonPath("$.videoUrl").value(url));
+        mvc.perform(post("/api/posts/{id}/comments", id).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"body\":\"Great video!\"}")).andExpect(status().isCreated());
+        assertThat(jdbc.queryForObject("SELECT video_url FROM posts WHERE id = ?", String.class, id)).isEqualTo(url);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM post_media WHERE post_id = ?", Long.class, id)).isZero();
+        assertThat(upload(ticket, new byte[] {8, 8, 8})).isGreaterThanOrEqualTo(300);
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var served = client.send(HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofByteArray());
+            assertThat(served.statusCode()).isEqualTo(200);
+            assertThat(served.body()).isEqualTo(original);
+        }
+    }
+
+    @Test
+    void supportedVideoFormatsAndCommunityPostsWork() throws Exception {
+        String community = mvc.perform(post("/api/communities").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"name\":\"Video pets\",\"description\":\"Pet moments\"}"))
+            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long communityId = ((Number) JsonPath.read(community, "$.id")).longValue();
+        for (String type : List.of("video/quicktime", "video/webm")) {
+            String ticket = videoTicket(type);
+            assertThat(upload(ticket, new byte[] {1, 2, 3})).isBetween(200, 299);
+            String key = JsonPath.read(ticket, "$.key");
+            String url = JsonPath.read(ticket, "$.publicUrl");
+            createPost("{\"videoKey\":\"" + key + "\",\"communityId\":" + communityId + "}");
+            mvc.perform(get("/api/communities/{id}/feed", communityId))
+                .andExpect(jsonPath("$.items[0].videoUrl").value(url));
+        }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts", Long.class)).isEqualTo(2);
+    }
+
+    @Test
+    void invalidOrMixedVideoInputsCreateNoPosts() throws Exception {
+        mvc.perform(post("/api/posts/video-uploads").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"contentType\":\"application/pdf\"}")).andExpect(status().isBadRequest());
+        for (String key : List.of("", "invalid", "pets/2/posts/videos/" + UUID.randomUUID() + ".mp4",
+            "pets/1/posts/" + UUID.randomUUID() + ".png", "pets/1/posts/videos/" + UUID.randomUUID() + ".mp4")) {
+            mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"body\":\"Video\",\"videoKey\":\"" + key + "\"}"))
+                .andExpect(status().isBadRequest());
+        }
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"body\":\"Link\",\"videoUrl\":\"https://example.test/video.mp4\"}"))
+            .andExpect(status().isBadRequest());
+        String ticket = videoTicket("video/mp4");
+        assertThat(upload(ticket, new byte[] {1, 2, 3})).isBetween(200, 299);
+        String key = JsonPath.read(ticket, "$.key");
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"videoKey\":\"" + key + "\",\"imageKeys\":[\"a\"]}"))
+            .andExpect(status().isBadRequest());
+        String oversized = videoTicket("video/mp4");
+        assertThat(upload(oversized, new byte[50 * 1024 * 1024 + 1])).isBetween(200, 299);
+        String oversizedKey = JsonPath.read(oversized, "$.key");
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"videoKey\":\"" + oversizedKey + "\"}")).andExpect(status().isBadRequest());
+        String empty = videoTicket("video/mp4");
+        assertThat(upload(empty, new byte[0])).isBetween(200, 299);
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"videoKey\":\"" + JsonPath.read(empty, "$.key") + "\"}"))
+            .andExpect(status().isBadRequest());
+        // SeaweedFS permits fixture writes; publishing must inspect the actual object metadata.
+        String wrongType = videoTicket("video/mp4");
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            var response = client.send(HttpRequest.newBuilder(URI.create(JsonPath.read(wrongType, "$.publicUrl")))
+                .header("Content-Type", "application/pdf").PUT(HttpRequest.BodyPublishers.ofByteArray(new byte[] {1})).build(),
+                HttpResponse.BodyHandlers.discarding());
+            assertThat(response.statusCode()).isBetween(200, 299);
+        }
+        mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"videoKey\":\"" + JsonPath.read(wrongType, "$.key") + "\"}"))
+            .andExpect(status().isBadRequest());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM posts", Long.class)).isZero();
+    }
+
+    @Test
+    void videoPostsKeepPrivateBlockAndFollowingFeedRules() throws Exception {
+        String url = "https://example.test/video.mp4";
+        long id = jdbc.queryForObject("INSERT INTO posts (pet_id, video_url) VALUES (1000, ?) RETURNING id", Long.class, url);
+        jdbc.update("UPDATE pets SET private_profile = TRUE WHERE id = 1000");
+        try {
+            mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items.length()").value(0));
+            mvc.perform(get("/api/posts/{id}", id)).andExpect(status().isNotFound());
+            jdbc.update("INSERT INTO pet_follows (follower_pet_id, following_pet_id, accepted) VALUES (1, 1000, TRUE)");
+            mvc.perform(get("/api/feed").param("following", "true"))
+                .andExpect(jsonPath("$.items[0].videoUrl").value(url));
+            mvc.perform(get("/api/posts/{id}", id)).andExpect(status().isOk());
+            jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1000, 1)");
+            mvc.perform(get("/api/feed")).andExpect(jsonPath("$.items.length()").value(0));
+            mvc.perform(get("/api/posts/{id}", id)).andExpect(status().isNotFound());
+        } finally {
+            jdbc.update("DELETE FROM pet_blocks WHERE blocker_pet_id = 1000 AND blocked_pet_id = 1");
+            jdbc.update("DELETE FROM pet_follows WHERE follower_pet_id = 1 AND following_pet_id = 1000");
+            jdbc.update("UPDATE pets SET private_profile = FALSE WHERE id = 1000");
+        }
+    }
+
     private long createPost(String body) throws Exception {
         String json = mvc.perform(post("/api/posts").contentType(MediaType.APPLICATION_JSON)
                 .content(body))
@@ -316,7 +427,15 @@ class PostApiIntegrationTest {
     }
 
     private String imageTicket(String contentType) throws Exception {
-        String ticket = mvc.perform(post("/api/posts/media-uploads").contentType(MediaType.APPLICATION_JSON)
+        return ticket("/api/posts/media-uploads", contentType);
+    }
+
+    private String videoTicket(String contentType) throws Exception {
+        return ticket("/api/posts/video-uploads", contentType);
+    }
+
+    private String ticket(String path, String contentType) throws Exception {
+        String ticket = mvc.perform(post(path).contentType(MediaType.APPLICATION_JSON)
                 .content("{\"contentType\":\"" + contentType + "\"}"))
             .andExpect(status().isOk())
             .andReturn().getResponse().getContentAsString();

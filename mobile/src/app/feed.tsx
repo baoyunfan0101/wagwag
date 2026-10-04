@@ -4,12 +4,14 @@ import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { PostCard } from '@/components/PostCard';
+import { usePostVisibility } from '@/lib/usePostVisibility';
 import { getFeed, likePost, unlikePost, type Post } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
 const PAGE_SIZE = 20;
 
 export default function FeedScreen() {
+  const { visiblePosts, viewabilityConfig, onViewableItemsChanged } = usePostVisibility();
   const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
   const [following, setFollowing] = useState(false);
@@ -110,6 +112,7 @@ export default function FeedScreen() {
 
   return <SafeAreaView style={styles.safe}>
     <FlatList
+      extraData={visiblePosts} viewabilityConfig={viewabilityConfig} onViewableItemsChanged={onViewableItemsChanged}
       data={posts}
       keyExtractor={(post) => String(post.id)}
       contentContainerStyle={styles.content}
@@ -117,7 +120,7 @@ export default function FeedScreen() {
       onRefresh={() => void loadFirstPage(true)}
       onEndReached={() => void loadNextPage()}
       onEndReachedThreshold={0.5}
-      renderItem={({ item }) => <PostCard post={item}
+      renderItem={({ item }) => <PostCard post={item} videoVisible={visiblePosts.has(item.id)}
         onOpen={() => router.push({ pathname: '/post/[id]', params: { id: String(item.id) } })}
         onPet={() => router.push({ pathname: '/pet/[id]', params: { id: String(item.petId) } })}
         onCommunity={item.communityId ? () => router.push({ pathname: '/community/[id]',
