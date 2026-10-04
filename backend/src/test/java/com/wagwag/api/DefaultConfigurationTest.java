@@ -39,7 +39,7 @@ class DefaultConfigurationTest {
                 "pet_follows", "pet_blocks", "pet_mutes", "communities",
                 "community_members", "post_communities", "tasks", "task_assignments",
                 "task_events", "task_ratings", "task_availability", "conversations",
-                "conversation_members", "messages", "notifications"}) {
+                "conversation_members", "messages", "notifications", "push_devices", "push_deliveries"}) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class)).isZero();
         }
 

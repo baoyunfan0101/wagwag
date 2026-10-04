@@ -21,15 +21,22 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class MessageService {
     private static final String CONVERSATION_SELECT = "SELECT c.id, p.id AS pet_id, p.name, p.avatar_url, "
-        + "c.updated_at, latest.body AS last_message, NOT EXISTS (SELECT 1 FROM pet_blocks b "
+        + "c.updated_at, latest.body AS last_message, me.last_delivered_message_id, "
+        + "peer.last_delivered_message_id AS peer_delivered_id, peer.last_read_message_id AS peer_read_id, "
+        + "(SELECT COUNT(*) FROM messages unread WHERE unread.conversation_id = c.id "
+        + "AND unread.sender_pet_id <> me.pet_id AND unread.id > me.last_read_message_id) AS unread_count, "
+        + "NOT EXISTS (SELECT 1 FROM pet_blocks b "
         + "WHERE (b.blocker_pet_id = me.pet_id AND b.blocked_pet_id = peer.pet_id) "
         + "OR (b.blocker_pet_id = peer.pet_id AND b.blocked_pet_id = me.pet_id)) AS can_message "
         + "FROM conversations c JOIN conversation_members me ON me.conversation_id = c.id "
         + "JOIN conversation_members peer ON peer.conversation_id = c.id AND peer.pet_id <> me.pet_id "
         + "JOIN pets p ON p.id = peer.pet_id LEFT JOIN LATERAL (SELECT m.body FROM messages m "
         + "WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) latest ON TRUE ";
-    private static final String MESSAGE_SELECT = "SELECT id, conversation_id, sender_pet_id, "
-        + "client_message_id, body, created_at FROM messages ";
+    private static final String MESSAGE_SELECT = "SELECT m.id, m.conversation_id, m.sender_pet_id, "
+        + "m.client_message_id, m.body, m.created_at, CASE WHEN recipient.last_read_message_id >= m.id THEN 'READ' "
+        + "WHEN recipient.last_delivered_message_id >= m.id THEN 'DELIVERED' ELSE 'SENT' END AS delivery_status "
+        + "FROM messages m JOIN conversation_members recipient ON recipient.conversation_id = m.conversation_id "
+        + "AND recipient.pet_id <> m.sender_pet_id ";
 
     private final JdbcTemplate jdbc;
     private final PetRepository pets;
@@ -94,13 +101,13 @@ public class MessageService {
             || (beforeId != null && afterId != null)) throw invalidPage();
         List<Message> rows;
         if (afterId != null) {
-            rows = jdbc.query(MESSAGE_SELECT + "WHERE conversation_id = ? AND id > ? "
-                + "ORDER BY id ASC LIMIT ?", MessageService::message, id, afterId, limit + 1);
+            rows = jdbc.query(MESSAGE_SELECT + "WHERE m.conversation_id = ? AND m.id > ? "
+                + "ORDER BY m.id ASC LIMIT ?", MessageService::message, id, afterId, limit + 1);
         } else {
             rows = beforeId == null
-                ? jdbc.query(MESSAGE_SELECT + "WHERE conversation_id = ? ORDER BY id DESC LIMIT ?",
+                ? jdbc.query(MESSAGE_SELECT + "WHERE m.conversation_id = ? ORDER BY m.id DESC LIMIT ?",
                     MessageService::message, id, limit + 1)
-                : jdbc.query(MESSAGE_SELECT + "WHERE conversation_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+                : jdbc.query(MESSAGE_SELECT + "WHERE m.conversation_id = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?",
                     MessageService::message, id, beforeId, limit + 1);
         }
         boolean more = rows.size() > limit;
@@ -108,6 +115,24 @@ public class MessageService {
         if (afterId == null) Collections.reverse(items);
         return new MessagePage(items, more && afterId == null ? items.getFirst().id() : null,
             more && afterId != null ? items.getLast().id() : null);
+    }
+
+    @Transactional
+    public Conversation receipt(long id, ReceiptInput input) {
+        long actor = actorId();
+        Conversation conversation = detail(id);
+        long through = input.throughMessageId();
+        if (through != 0 && !Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS "
+            + "(SELECT 1 FROM messages WHERE conversation_id = ? AND id = ?)", Boolean.class, id, through))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid conversation receipt");
+        }
+        int changed = jdbc.update("UPDATE conversation_members SET "
+            + "last_delivered_message_id = GREATEST(last_delivered_message_id, ?), "
+            + "last_read_message_id = GREATEST(last_read_message_id, ?) "
+            + "WHERE conversation_id = ? AND pet_id = ? AND (last_delivered_message_id < ? OR last_read_message_id < ?)",
+            through, input.read() ? through : 0, id, actor, through, input.read() ? through : 0);
+        notifications.receipt(actor, conversation.petId(), id, through, input.read(), changed > 0);
+        return detail(id);
     }
 
     @Transactional
@@ -121,7 +146,7 @@ public class MessageService {
         pairLock.lock(actor, peer);
         String body = input.body().trim();
         List<Message> existing = jdbc.query(MESSAGE_SELECT
-            + "WHERE conversation_id = ? AND sender_pet_id = ? AND client_message_id = ?",
+            + "WHERE m.conversation_id = ? AND m.sender_pet_id = ? AND m.client_message_id = ?",
             MessageService::message, id, actor, input.clientMessageId());
         if (!existing.isEmpty()) return retry(existing.getFirst(), body);
         requireUnblocked(actor, peer);
@@ -131,13 +156,13 @@ public class MessageService {
             Long.class, id, actor, input.clientMessageId(), body);
         if (inserted.isEmpty()) {
             return retry(jdbc.queryForObject(MESSAGE_SELECT
-                + "WHERE conversation_id = ? AND sender_pet_id = ? AND client_message_id = ?",
+                + "WHERE m.conversation_id = ? AND m.sender_pet_id = ? AND m.client_message_id = ?",
                 MessageService::message, id, actor, input.clientMessageId()), body);
         }
         long messageId = inserted.getFirst();
         jdbc.update("UPDATE conversations SET updated_at = clock_timestamp() WHERE id = ?", id);
         notifications.message(peer, actor, messageId);
-        return jdbc.queryForObject(MESSAGE_SELECT + "WHERE id = ?", MessageService::message, messageId);
+        return jdbc.queryForObject(MESSAGE_SELECT + "WHERE m.id = ?", MessageService::message, messageId);
     }
 
     private void requireUnblocked(long actor, long peer) {
@@ -175,18 +200,21 @@ public class MessageService {
     private static Conversation conversation(ResultSet rs, int row) throws SQLException {
         return new Conversation(rs.getLong("id"), rs.getLong("pet_id"), rs.getString("name"),
             rs.getString("avatar_url"), rs.getString("last_message"), rs.getTimestamp("updated_at").toInstant(),
-            rs.getBoolean("can_message"));
+            rs.getBoolean("can_message"), rs.getLong("unread_count"), rs.getLong("last_delivered_message_id"),
+            rs.getLong("peer_delivered_id"), rs.getLong("peer_read_id"));
     }
 
     private static Message message(ResultSet rs, int row) throws SQLException {
         return new Message(rs.getLong("id"), rs.getLong("conversation_id"), rs.getLong("sender_pet_id"),
-            rs.getObject("client_message_id", UUID.class), rs.getString("body"), rs.getTimestamp("created_at").toInstant());
+            rs.getObject("client_message_id", UUID.class), rs.getString("body"), rs.getTimestamp("created_at").toInstant(),
+            rs.getString("delivery_status"));
     }
 
     public record Conversation(long id, long petId, String petName, String petAvatarUrl,
-                               String lastMessage, Instant updatedAt, boolean canMessage) {}
+                               String lastMessage, Instant updatedAt, boolean canMessage, long unreadCount,
+                               long myDeliveredThroughId, long peerDeliveredThroughId, long peerReadThroughId) {}
     public record ConversationPage(List<Conversation> items, Integer nextPage) {}
     public record Message(long id, long conversationId, long senderPetId, UUID clientMessageId,
-                          String body, Instant createdAt) {}
+                          String body, Instant createdAt, String deliveryStatus) {}
     public record MessagePage(List<Message> items, Long nextBeforeId, Long nextAfterId) {}
 }
