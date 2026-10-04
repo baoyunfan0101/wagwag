@@ -5,16 +5,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, KeyboardAvoidingView, Platform, Pressable,
   StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { DEV_PET_ID, getConversation, getMessages, sendMessage,
+import { acknowledgeConversation, DEV_PET_ID, getConversation, getMessages, sendMessage,
   type ChatMessage, type Conversation, type MessageInput } from '@/lib/api';
-import { mergeMessages } from '@/lib/messageState';
-import { useForegroundPolling } from '@/lib/useForegroundPolling';
+import { deliveryLabel, mergeConversation, mergeMessages } from '@/lib/messageState';
+import { useRealtime, useRealtimeRefresh } from '@/lib/RealtimeProvider';
 import { colors } from '@/lib/theme';
 
 export default function ConversationScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const conversationId = Number(id);
+  const { connected, refreshUnread } = useRealtime();
+  const [foreground, setForeground] = useState(!AppState.currentState || AppState.currentState === 'active');
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [nextBeforeId, setNextBeforeId] = useState<number | null>(null);
@@ -34,6 +36,36 @@ export default function ConversationScreen() {
   const sendBusy = useRef(false);
   const pendingRef = useRef<MessageInput | null>(null);
   const receivedThrough = useRef(0);
+  const readThrough = useRef(0);
+  const acknowledging = useRef(false);
+
+  useEffect(() => {
+    const listener = AppState.addEventListener('change', state => setForeground(state === 'active'));
+    return () => listener.remove();
+  }, []);
+
+  useEffect(() => {
+    if (!foreground || !ready.current || acknowledging.current || receivedThrough.current <= readThrough.current) return;
+    const current = generation.current;
+    acknowledging.current = true;
+    async function read() {
+      try {
+        // This cursor is advanced only by fetched history, never by a send response or a socket hint.
+        while (ready.current && (!AppState.currentState || AppState.currentState === 'active')
+          && current === generation.current && receivedThrough.current > readThrough.current) {
+          const through = receivedThrough.current;
+          const detail = await acknowledgeConversation(conversationId, through, true);
+          if (current !== generation.current) return;
+          readThrough.current = through;
+          setConversation(previous => mergeConversation(previous, detail));
+          refreshUnread();
+        }
+      } catch {
+        if (current === generation.current) setPollError('Could not update read status. Tap to retry.');
+      } finally { acknowledging.current = false; }
+    }
+    void read();
+  }, [messages, foreground, conversationId, refreshUnread]);
 
   useEffect(() => {
     pendingRef.current = null;
@@ -45,6 +77,8 @@ export default function ConversationScreen() {
   const load = useCallback(async () => {
     const current = ++generation.current;
     ready.current = false;
+    receivedThrough.current = 0;
+    readThrough.current = 0;
     setLoading(true);
     setError(null);
     setPollError(null);
@@ -60,7 +94,7 @@ export default function ConversationScreen() {
     try {
       const [detail, result] = await Promise.all([getConversation(conversationId), getMessages(conversationId)]);
       if (current !== generation.current) return;
-      setConversation(detail);
+      setConversation(previous => mergeConversation(previous, detail));
       setMessages(result.items);
       setNextBeforeId(result.nextBeforeId);
       receivedThrough.current = result.items.at(-1)?.id ?? 0;
@@ -84,7 +118,7 @@ export default function ConversationScreen() {
     try {
       const detail = await getConversation(conversationId);
       if (current !== generation.current) return;
-      setConversation(detail);
+      setConversation(previous => mergeConversation(previous, detail));
       let more = true;
       while (more && ready.current && (!AppState.currentState || AppState.currentState === 'active')) {
         const result = await getMessages(conversationId, { afterId: receivedThrough.current, limit: 50 });
@@ -99,7 +133,7 @@ export default function ConversationScreen() {
     } finally { polling.current = false; }
   }
 
-  useForegroundPolling(poll);
+  useRealtimeRefresh(poll, conversationId);
 
   async function loadOlder() {
     if (nextBeforeId === null || olderBusy.current || !ready.current) return;
@@ -134,6 +168,7 @@ export default function ConversationScreen() {
       pendingRef.current = null;
       setPending(null);
       setBody('');
+      void poll();
     } catch {
       if (current === generation.current) setSendError('Could not send. Your message is kept here; retry or clear it.');
     } finally { sendBusy.current = false; setSending(false); }
@@ -156,6 +191,7 @@ export default function ConversationScreen() {
         <Text style={styles.title} numberOfLines={1}>{conversation?.petName || 'Conversation'}</Text>
         <View style={{ width: 24 }} />
       </View>
+      <Text style={styles.notice}>{connected ? 'Live updates connected' : 'Reconnecting; checking for messages'}</Text>
       {loading ? <View style={styles.center}><ActivityIndicator color={colors.accent} /></View> :
         error ? <View style={styles.center}><Pressable onPress={() => void load()}><Text style={styles.error}>{error}</Text></Pressable></View> : <>
           {conversation && !conversation.canMessage && <Text style={styles.notice}>Messaging is unavailable. Your previous history is still here.</Text>}
@@ -168,6 +204,7 @@ export default function ConversationScreen() {
               return <View style={[styles.bubble, mine ? styles.mine : styles.theirs]}>
                 <Text style={[styles.message, mine && styles.myMessage]}>{item.body}</Text>
                 <Text style={[styles.date, mine && styles.myDate]}>{new Date(item.createdAt).toLocaleString()}</Text>
+                {mine && <Text style={[styles.date, styles.myDate]}>{deliveryLabel(item, conversation)}</Text>}
               </View>;
             }}
             ListEmptyComponent={<Text style={styles.notice}>Say hello to start the conversation.</Text>}

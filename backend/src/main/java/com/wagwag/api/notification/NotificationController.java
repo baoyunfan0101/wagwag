@@ -2,6 +2,7 @@ package com.wagwag.api.notification;
 
 import com.wagwag.api.notification.NotificationService.Notification;
 import com.wagwag.api.notification.NotificationService.NotificationPage;
+import com.wagwag.api.notification.NotificationService.UnreadCounts;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -24,4 +25,7 @@ public class NotificationController {
 
     @PutMapping("/{id}/read")
     public Notification read(@PathVariable long id) { return notifications.read(id); }
+
+    @GetMapping("/unread")
+    public UnreadCounts unread() { return notifications.unread(); }
 }

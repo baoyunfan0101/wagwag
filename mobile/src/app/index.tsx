@@ -5,6 +5,7 @@ import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleS
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEV_PET_ID, getPet, type Pet } from '@/lib/api';
 import { colors } from '@/lib/theme';
+import { useRealtime } from '@/lib/RealtimeProvider';
 
 function Detail({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }) {
   return <View style={styles.detail}>
@@ -16,6 +17,7 @@ function Detail({ icon, label, value }: { icon: keyof typeof Ionicons.glyphMap; 
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { unread } = useRealtime();
   const [pet, setPet] = useState<Pet | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -100,11 +102,11 @@ export default function ProfileScreen() {
           </Pressable>
           <Pressable style={styles.privacyButton} onPress={() => router.push('/messages')}>
             <Ionicons name="chatbubbles-outline" size={18} color={colors.green} />
-            <Text style={styles.privacyText}>Messages</Text>
+            <Text style={styles.privacyText}>Messages{unread.messages > 0 ? ` (${unread.messages})` : ''}</Text>
           </Pressable>
           <Pressable style={styles.privacyButton} onPress={() => router.push('/notifications')}>
             <Ionicons name="notifications-outline" size={18} color={colors.green} />
-            <Text style={styles.privacyText}>Notifications</Text>
+            <Text style={styles.privacyText}>Notifications{unread.notifications > 0 ? ` (${unread.notifications})` : ''}</Text>
           </Pressable>
           <Text style={styles.footer}>Made for the pets who make life better.</Text>
         </> : null}

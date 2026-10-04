@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.jayway.jsonpath.JsonPath;
 import com.wagwag.api.message.MessageInput;
 import com.wagwag.api.message.MessageService;
+import com.wagwag.api.message.ReceiptInput;
 import com.wagwag.api.notification.NotificationService;
 import com.wagwag.api.pet.PetRepository;
 import com.wagwag.api.social.SocialPairLock;
@@ -257,6 +258,57 @@ class MessageApiIntegrationTest {
 
     private MessageService other(long petId) {
         return new MessageService(jdbc, pets, social, pairLock, notifications, petId);
+    }
+
+    @Test
+    void deliveryAndReadReceiptsAreMonotonicAndUnreadCountsUsePostgres() throws Exception {
+        long id = open();
+        long sentId = number(send(id, UUID.randomUUID(), "Receipt test"), "$.id");
+        mvc.perform(get("/api/conversations/{id}/messages", id))
+            .andExpect(jsonPath("$.items[0].deliveryStatus").value("SENT"));
+        transactions.executeWithoutResult(tx -> other(1000).receipt(id, new ReceiptInput(sentId, false)));
+        mvc.perform(get("/api/conversations/{id}/messages", id))
+            .andExpect(jsonPath("$.items[0].deliveryStatus").value("DELIVERED"));
+        transactions.executeWithoutResult(tx -> other(1000).receipt(id, new ReceiptInput(sentId, true)));
+        transactions.executeWithoutResult(tx -> other(1000).receipt(id, new ReceiptInput(0L, false)));
+        mvc.perform(get("/api/conversations/{id}/messages", id))
+            .andExpect(jsonPath("$.items[0].deliveryStatus").value("READ"));
+        mvc.perform(get("/api/conversations/{id}", id))
+            .andExpect(jsonPath("$.peerReadThroughId").value(sentId));
+        long replyId = transactions.execute(tx -> other(1000).send(id,
+            new MessageInput(UUID.randomUUID(), "Unread reply"))).id();
+        mvc.perform(get("/api/notifications/unread"))
+            .andExpect(jsonPath("$.messages").value(1)).andExpect(jsonPath("$.notifications").value(1));
+        mvc.perform(get("/api/conversations"))
+            .andExpect(jsonPath("$.items[0].unreadCount").value(1));
+        mvc.perform(put("/api/conversations/{id}/receipt", id).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"throughMessageId\":" + replyId + ",\"read\":false}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.unreadCount").value(1));
+        mvc.perform(put("/api/conversations/{id}/receipt", id).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"throughMessageId\":" + replyId + ",\"read\":true}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.unreadCount").value(0));
+        mvc.perform(get("/api/notifications/unread"))
+            .andExpect(jsonPath("$.messages").value(0)).andExpect(jsonPath("$.notifications").value(0));
+        assertThat(jdbc.queryForObject("SELECT last_read_message_id FROM conversation_members "
+            + "WHERE conversation_id = ? AND pet_id = 1", Long.class, id)).isEqualTo(replyId);
+    }
+
+    @Test
+    void receiptsRequireMembershipAndMessageInThatConversation() throws Exception {
+        long id = open();
+        long otherConversation = transactions.execute(tx -> other(1000).open(1001)).id();
+        long otherMessage = transactions.execute(tx -> other(1000).send(otherConversation,
+            new MessageInput(UUID.randomUUID(), "Another conversation"))).id();
+        mvc.perform(put("/api/conversations/{id}/receipt", id).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"throughMessageId\":" + otherMessage + ",\"read\":true}"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(put("/api/conversations/{id}/receipt", otherConversation).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"throughMessageId\":" + otherMessage + ",\"read\":true}"))
+            .andExpect(status().isNotFound());
+        mvc.perform(put("/api/conversations/{id}/receipt", id).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"throughMessageId\":-1,\"read\":true}")).andExpect(status().isBadRequest());
+        assertThatThrownBy(() -> jdbc.update("UPDATE conversation_members SET last_read_message_id = 10 "
+            + "WHERE conversation_id = ? AND pet_id = 1", id)).isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private long open() throws Exception {

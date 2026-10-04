@@ -250,6 +250,9 @@ CREATE INDEX conversations_updated_idx ON conversations(updated_at DESC, id DESC
 CREATE TABLE conversation_members (
     conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     pet_id BIGINT NOT NULL REFERENCES pets(id),
+    last_delivered_message_id BIGINT NOT NULL DEFAULT 0 CHECK (last_delivered_message_id >= 0),
+    last_read_message_id BIGINT NOT NULL DEFAULT 0 CHECK (last_read_message_id >= 0),
+    CHECK (last_read_message_id <= last_delivered_message_id),
     PRIMARY KEY (conversation_id, pet_id)
 );
 
@@ -283,3 +286,30 @@ CREATE TABLE notifications (
 );
 
 CREATE INDEX notifications_recipient_id_idx ON notifications(recipient_pet_id, id DESC);
+
+CREATE TABLE push_devices (
+    id UUID PRIMARY KEY,
+    pet_id BIGINT NOT NULL REFERENCES pets(id),
+    expo_push_token VARCHAR(255) NOT NULL UNIQUE,
+    platform VARCHAR(16) NOT NULL CHECK (platform IN ('IOS', 'ANDROID')),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX push_devices_pet_idx ON push_devices(pet_id) WHERE enabled;
+
+CREATE TABLE push_deliveries (
+    notification_id BIGINT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+    device_id UUID NOT NULL REFERENCES push_devices(id),
+    status VARCHAR(16) NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'TICKET', 'COMPLETE', 'FAILED', 'SKIPPED')),
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ticket_id VARCHAR(255),
+    sent_token VARCHAR(255),
+    last_error VARCHAR(120),
+    PRIMARY KEY (notification_id, device_id)
+);
+
+CREATE INDEX push_deliveries_due_idx ON push_deliveries(next_attempt_at)
+    WHERE status IN ('PENDING', 'TICKET');

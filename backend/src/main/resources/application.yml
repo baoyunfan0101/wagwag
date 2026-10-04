@@ -21,6 +21,12 @@ spring:
     open-in-view: false
 
 app:
+  realtime:
+    redis-enabled: ${REALTIME_REDIS_ENABLED:false}
+  push:
+    enabled: ${EXPO_PUSH_ENABLED:false}
+    base-url: ${EXPO_PUSH_BASE_URL:https://exp.host/--/api/v2/push}
+    access-token: ${EXPO_PUSH_ACCESS_TOKEN:}
   allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:8081,http://localhost:19006}
   follow-cache:
     enabled: ${FOLLOW_CACHE_ENABLED:true}
