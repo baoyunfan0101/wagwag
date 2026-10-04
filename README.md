@@ -57,7 +57,7 @@ docker compose up -d postgres
 
 This deletes local PostgreSQL data, including posts and profiles, but leaves the SeaweedFS volume intact. If you set `COMPOSE_PROJECT_NAME`, replace `wagwag_postgres_data` with that project's PostgreSQL volume name. Before v1, schema and API contracts may change directly without backwards compatibility. Starting with v1, the committed schema becomes the production baseline, future database changes use incremental Flyway migrations, and compatibility with released clients is considered explicitly.
 
-The Module 7B task baseline adds generated PostGIS locations, ratings, status events, and availability tables. Reset an older local PostgreSQL volume with the commands above before running this baseline.
+The current baseline includes Module 8A conversations, members, messages, and notifications, in addition to task spatial locations, ratings, history, and availability. Reset an older local PostgreSQL volume with the commands above before running this baseline.
 
 ## API
 
@@ -118,6 +118,15 @@ The Module 7B task baseline adds generated PostGIS locations, ratings, status ev
 | POST | `/api/tasks/{id}/start` | Start an accepted task as its assignee |
 | POST | `/api/tasks/{id}/complete` | Complete an in-progress task as its assignee |
 | POST | `/api/tasks/{id}/cancel` | Cancel an open or accepted task as its creator |
+| POST | `/api/conversations` | Open or reuse a direct conversation with another pet |
+| GET | `/api/conversations?limit=20&page=0` | List the active pet's conversations, recent activity first |
+| GET | `/api/conversations/{id}` | Read conversation details as a member |
+| GET | `/api/conversations/{id}/messages?limit=30` | Read the most recent messages |
+| GET | `/api/conversations/{id}/messages?limit=30&beforeId=123` | Load earlier history |
+| GET | `/api/conversations/{id}/messages?limit=50&afterId=123` | Poll for newer messages |
+| POST | `/api/conversations/{id}/messages` | Send text as a conversation member |
+| GET | `/api/notifications?limit=20&beforeId=123` | Read the active pet's notification center |
+| PUT | `/api/notifications/{id}/read` | Mark an owned notification read idempotently |
 | POST | `/api/posts/{id}/likes` | Like a post |
 | DELETE | `/api/posts/{id}/likes` | Unlike a post |
 | POST | `/api/posts/{id}/comments` | Add a comment |
@@ -141,9 +150,19 @@ Blocked pets cannot discover or newly accept each other's tasks in either block 
 
 **Find tasks near me** searches within 5 km on mobile. The API accepts a radius of 1-20000 meters (default 5000) and returns `{ "items": [{ "task": {...}, "distanceMeters": 0 }], "nextPage": null }`. PostGIS filters and sorts by distance with spatial indexes, then creation time and ID as tie-breakers. For other pets' tasks, both the search radius and distance are calculated from the rounded public location; the creator can search their own exact location. Distance queries do not expose a hidden exact point.
 
-Use **Available to accept tasks** to pause new acceptance with `{ "acceptingTasks": false }`; existing assignments can still be started and completed. Creators can rate completed tasks with `{ "score": 5, "comment": "Great walk" }`, using 1-5 stars and an optional comment of up to 500 characters. Saving again updates the same rating. The assignee's **Pet-care tasks** screen shows their average and rating count. Task details show participant status history and the creator's rating. Payments and disputes remain future work; push delivery will be integrated with Module 8 messaging and notifications.
+Use **Available to accept tasks** to pause new acceptance with `{ "acceptingTasks": false }`; existing assignments can still be started and completed. Creators can rate completed tasks with `{ "score": 5, "comment": "Great walk" }`, using 1-5 stars and an optional comment of up to 500 characters. Saving again updates the same rating. The assignee's **Pet-care tasks** screen shows their average and rating count. Task details show participant status history and the creator's rating. Payments and disputes remain future work; device push delivery belongs to Module 8B.
 
 To try both task roles locally, use `APP_DEV_PET_ID=1000` when restarting the dev API and set `EXPO_PUBLIC_DEV_PET_ID=1000` in the mobile environment, then restart Expo. This selects Biscuit for task actions; restore both IDs to `1` for Mochi. These fixed development identities allow testing both sides of a task before authentication is introduced.
+
+### Messaging and in-app notifications (Module 8A)
+
+Tap **Messages** on the profile, or **Message pet** on another pet's profile. `POST /api/conversations` accepts `{ "petId": 1000 }`; the unordered pet pair has one persisted conversation. Only its two members can list, read, or send messages. Send `{ "clientMessageId": "a9ee0f56-095a-4ec8-bf87-e56531fdcdb9", "body": "Hello Biscuit!" }`. Text must be non-blank and at most 2000 characters. The client generates one UUID per send and reuses the same payload on retry. Identical retries return the original message; different text with the same UUID returns 409. Message creation and the recipient's notification commit together.
+
+Message pages return `{ "items": [...], "nextBeforeId": 123, "nextAfterId": null }`, with each page ordered oldest first. Without a cursor, the API returns the latest page. Use `nextBeforeId` to load older history. Poll with `afterId` equal to the last received message ID (or 0 for an empty conversation); if `nextAfterId` is present, continue from it before the next polling interval. Limits are 1-50. The chat screen polls every five seconds while focused and foregrounded, stops polling when hidden/backgrounded, merges messages by ID, and retains failed sends for explicit retry. It does not advance the receive cursor from a send response, so incoming messages between polls are not skipped. Conversation lists use zero-based pages with `nextPage`; refresh to reload recent activity.
+
+Blocks in either direction prevent opening conversations and sending new messages. These writes use the existing PostgreSQL pet-pair locks, serializing them with block changes. Existing conversation members retain access to previously exchanged history; an exact retry can resolve an already committed message after a later block. Mute remains feed-only, and private profiles do not prevent direct messaging. No conversation content is exposed to non-members.
+
+Tap **Notifications** for incoming-message and task-status events. Each actual task transition notifies the other established participant, including after a later block; an unassigned cancellation has no recipient. Message/transition retries do not duplicate notifications. The center is recipient-scoped, newest first, and uses `nextBeforeId` for older pages. Opening an item marks it read and navigates to its conversation or task. Lists refresh on focus or pull-to-refresh; notifications persist across application restarts. Use the same development identity switch described above to exchange messages as Mochi and Biscuit. Module 8A is REST and PostgreSQL only: WebSocket, Redis Pub/Sub, message read/delivery receipts, aggregate unread counters, and device push notifications remain Module 8B work.
 
 Create a community with `{ "name": "Houston Dog Parks", "description": "Local walks" }`. Its creator joins automatically; join and leave are idempotent. Community lists use zero-based `page` and `nextPage`. To post in a community, include `"communityId": 123` in the existing post request while joined. A post belongs to at most one community. Community feeds use the same newest-first cursor contract and respect existing private-profile, block, and mute visibility rules.
 

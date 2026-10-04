@@ -104,6 +104,15 @@ export type TaskProfile = { petId: number; acceptingTasks: boolean; averageRatin
 export type TaskEvent = { id: number; actorPetId: number; actorName: string; status: TaskStatus; createdAt: string };
 export type NearbyTask = { task: PetTask; distanceMeters: number };
 export type NearbyTaskPage = { items: NearbyTask[]; nextPage: number | null };
+export type Conversation = { id: number; petId: number; petName: string; petAvatarUrl: string | null;
+  lastMessage: string | null; updatedAt: string; canMessage: boolean };
+export type ConversationPage = { items: Conversation[]; nextPage: number | null };
+export type MessageInput = { clientMessageId: string; body: string };
+export type ChatMessage = MessageInput & { id: number; conversationId: number; senderPetId: number; createdAt: string };
+export type MessagePage = { items: ChatMessage[]; nextBeforeId: number | null; nextAfterId: number | null };
+export type PetNotification = { id: number; type: 'MESSAGE' | 'TASK_STATUS'; actorPetId: number; actorName: string;
+  targetId: number; taskTitle: string | null; taskStatus: TaskStatus | null; createdAt: string; readAt: string | null };
+export type NotificationPage = { items: PetNotification[]; nextBeforeId: number | null };
 export type Comment = {
   id: number;
   postId: number;
@@ -141,6 +150,37 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export function getPet(id: number): Promise<Pet> {
   return request<Pet>(`/api/pets/${id}`);
+}
+
+export function openConversation(petId: number): Promise<Conversation> {
+  return request<Conversation>('/api/conversations', { method: 'POST', body: JSON.stringify({ petId }) });
+}
+
+export function getConversations(limit = 20, page = 0): Promise<ConversationPage> {
+  return request<ConversationPage>(`/api/conversations?limit=${limit}&page=${page}`);
+}
+
+export function getConversation(id: number): Promise<Conversation> {
+  return request<Conversation>(`/api/conversations/${id}`);
+}
+
+export function getMessages(id: number, options: { beforeId?: number; afterId?: number; limit?: number } = {}): Promise<MessagePage> {
+  const query = new URLSearchParams({ limit: String(options.limit ?? 30) });
+  if (options.beforeId !== undefined) query.set('beforeId', String(options.beforeId));
+  if (options.afterId !== undefined) query.set('afterId', String(options.afterId));
+  return request<MessagePage>(`/api/conversations/${id}/messages?${query}`);
+}
+
+export function sendMessage(id: number, input: MessageInput): Promise<ChatMessage> {
+  return request<ChatMessage>(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function getNotifications(limit = 20, beforeId?: number): Promise<NotificationPage> {
+  return request<NotificationPage>(`/api/notifications?limit=${limit}${beforeId === undefined ? '' : `&beforeId=${beforeId}`}`);
+}
+
+export function readNotification(id: number): Promise<PetNotification> {
+  return request<PetNotification>(`/api/notifications/${id}/read`, { method: 'PUT' });
 }
 
 export function savePet(id: number, input: PetInput): Promise<Pet> {
