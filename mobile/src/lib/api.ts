@@ -91,6 +91,14 @@ export type TerritorySummary = { id: number; walkId: number; createdAt: string;
   baseStrength: number; effectiveStrength: number; areaSquareMeters: number; ownedAreaSquareMeters: number };
 export type TerritoryPage = { items: TerritorySummary[]; nextPage: number | null };
 export type TerritoryLeader = { petId: number; petName: string; areaSquareMeters: number; claimCount: number };
+export type TaskCategory = 'DOG_WALKING' | 'PET_SITTING' | 'FEEDING' | 'CHECK_IN';
+export type TaskStatus = 'OPEN' | 'ACCEPTED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type TaskInput = { title: string; description: string; category: TaskCategory;
+  latitude: number; longitude: number };
+export type PetTask = TaskInput & { id: number; creatorPetId: number; creatorName: string;
+  locationExact: boolean; status: TaskStatus; assigneePetId: number | null; assigneeName: string | null;
+  createdAt: string; updatedAt: string };
+export type TaskPage = { items: PetTask[]; nextPage: number | null };
 export type Comment = {
   id: number;
   postId: number;
@@ -270,6 +278,22 @@ export function getTerritoryHistory(limit = 20, page = 0): Promise<TerritoryPage
 
 export function getTerritoryLeaderboard(limit = 20): Promise<TerritoryLeader[]> {
   return request<TerritoryLeader[]>(`/api/territories/leaderboard?limit=${limit}`);
+}
+
+export function getTasks(scope: 'open' | 'mine' = 'open', limit = 20, page = 0): Promise<TaskPage> {
+  return request<TaskPage>(`/api/tasks?scope=${scope}&limit=${limit}&page=${page}`);
+}
+
+export function getTask(id: number): Promise<PetTask> {
+  return request<PetTask>(`/api/tasks/${id}`);
+}
+
+export function createTask(input: TaskInput): Promise<PetTask> {
+  return request<PetTask>('/api/tasks', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function changeTask(id: number, action: 'accept' | 'start' | 'complete' | 'cancel'): Promise<PetTask> {
+  return request<PetTask>(`/api/tasks/${id}/${action}`, { method: 'POST' });
 }
 
 export function getWalks(limit = 20, page = 0): Promise<WalkPage> {

@@ -27,9 +27,15 @@ public class DevelopmentSeed implements ApplicationRunner {
             + "VALUES (1000, 1000, 'Biscuit', 'Dog', 'Corgi', 'UNKNOWN', "
             + "'A friendly neighbor ready to make new pet friends.') ON CONFLICT (id) DO NOTHING");
 
+        jdbc.update("INSERT INTO tasks (id, creator_pet_id, title, description, category, latitude, longitude) "
+            + "VALUES (1000, 1000, 'Walk Biscuit', 'A short neighborhood walk for Biscuit.', "
+            + "'DOG_WALKING', 29.7604, -95.3698) ON CONFLICT (id) DO NOTHING");
+
         jdbc.queryForObject("SELECT setval('users_id_seq', GREATEST((SELECT MAX(id) FROM users), "
             + "(SELECT last_value FROM users_id_seq)), true)", Long.class);
         jdbc.queryForObject("SELECT setval('pets_id_seq', GREATEST((SELECT MAX(id) FROM pets), "
             + "(SELECT last_value FROM pets_id_seq)), true)", Long.class);
+        jdbc.queryForObject("SELECT setval('tasks_id_seq', GREATEST((SELECT MAX(id) FROM tasks), "
+            + "(SELECT last_value FROM tasks_id_seq)), true)", Long.class);
     }
 }
