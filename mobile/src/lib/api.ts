@@ -3,6 +3,8 @@ import { File } from 'expo-file-system';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { Platform } from 'react-native';
 import { validateVideoSize, videoContentType } from './postVideo';
+import { readyVideo } from './videoUploadFlow';
+import type { VideoDraft, VideoProgress, VideoState, VideoTicket } from './videoUploadFlow';
 
 export type Gender = 'MALE' | 'FEMALE' | 'UNKNOWN';
 export type PetInput = {
@@ -47,6 +49,7 @@ export type Post = {
   body: string | null;
   imageUrls: string[];
   videoUrl: string | null;
+  videoThumbnailUrl: string | null;
   id: number;
   petId: number;
   petName: string;
@@ -435,22 +438,52 @@ export async function uploadPostImage(uri: string): Promise<string> {
   return ticket.key;
 }
 
-export async function uploadPostVideo(asset: ImagePickerAsset): Promise<string> {
+export async function uploadPostVideo(asset: ImagePickerAsset, draft: VideoDraft,
+  progress: (value: VideoProgress) => void, signal: AbortSignal): Promise<string> {
   const contentType = videoContentType(asset);
-  const video = Platform.OS === 'web' ? (asset.file || await fetch(asset.uri).then(result => result.blob()))
+  const video = Platform.OS === 'web' ? (asset.file || await fetch(asset.uri, { signal }).then(result => result.blob()))
     : new File(asset.uri);
   if (!video) throw new Error('Could not read the selected video.');
   validateVideoSize(video.size);
-  const ticket = await request<{ key: string; uploadUrl: string; headers: Record<string, string> }>(
-    '/api/posts/video-uploads', { method: 'POST', body: JSON.stringify({ contentType }) },
-  );
-  try {
-    const result = await expoFetch(ticket.uploadUrl, { method: 'PUT', headers: ticket.headers, body: video });
-    if (!result.ok) throw new Error('Video upload failed. Please try again.');
-  } catch {
-    throw new Error('Video upload failed. Check your network and try again.');
-  }
-  return ticket.key;
+  const path = '/api/posts/video-uploads';
+  const action = (id: string, suffix: string) => request<VideoState>(`${path}/${id}/${suffix}`, { method: 'POST', signal });
+  return readyVideo(draft, {
+    prepare: () => request<VideoTicket>(path, { method: 'POST', body: JSON.stringify({ contentType }), signal }),
+    renew: id => request<VideoTicket>(`${path}/${id}/ticket`, { method: 'POST', signal }),
+    get: id => request<VideoState>(`${path}/${id}`, { signal }),
+    complete: id => action(id, 'complete'), retry: id => action(id, 'retry'),
+    missingSource: error => error instanceof ApiError && error.status === 400,
+    put: async (ticket, onProgress) => {
+      const bytes = Platform.OS === 'web' ? video as Blob : await (video as File).arrayBuffer();
+      if (signal.aborted) throw new Error('Video upload cancelled.');
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const abort = () => xhr.abort();
+        const cleanup = () => signal.removeEventListener('abort', abort);
+        xhr.open('PUT', ticket.uploadUrl);
+        xhr.timeout = 120_000;
+        Object.entries(ticket.headers).forEach(([name, value]) => xhr.setRequestHeader(name, value));
+        xhr.upload.onprogress = event => {
+          if (event.lengthComputable) onProgress(Math.min(100, Math.round(event.loaded / event.total * 100)));
+        };
+        xhr.onload = () => {
+          cleanup();
+          if (xhr.status >= 200 && xhr.status < 300) { onProgress(100); resolve(); }
+          else reject(new Error('Video upload failed. Please try again.'));
+        };
+        xhr.onerror = xhr.ontimeout = () => { cleanup(); reject(new Error('Video upload failed. Check your network and try again.')); };
+        xhr.onabort = () => { cleanup(); reject(new Error('Video upload cancelled.')); };
+        signal.addEventListener('abort', abort, { once: true });
+        xhr.send(bytes);
+      });
+    },
+    wait: () => new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(new Error('Video upload cancelled.')); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 1000);
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    }),
+  }, progress, signal);
 }
 
 export function likePost(id: number): Promise<Post> {

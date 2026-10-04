@@ -35,7 +35,7 @@ class DefaultConfigurationTest {
     void defaultConfigurationCreatesCurrentSchemaWithoutDevelopmentData() {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM users", Long.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM pets", Long.class)).isZero();
-        for (String table : new String[] {"posts", "post_media", "likes", "comments",
+        for (String table : new String[] {"posts", "post_media", "video_uploads", "likes", "comments",
                 "pet_follows", "pet_blocks", "pet_mutes", "communities",
                 "community_members", "post_communities", "tasks", "task_assignments",
                 "task_events", "task_ratings", "task_availability", "conversations",
@@ -46,6 +46,14 @@ class DefaultConfigurationTest {
         jdbc.update("INSERT INTO users (id, display_name) VALUES (1, 'Test user')");
         jdbc.update("INSERT INTO pets (id, owner_id, name, species, gender) "
             + "VALUES (1, 1, 'One', 'Dog', 'UNKNOWN'), (2, 1, 'Two', 'Cat', 'UNKNOWN')");
+        var uploadId = java.util.UUID.randomUUID();
+        jdbc.update("INSERT INTO video_uploads (id, pet_id, source_key, content_type) VALUES (?, 1, 'source.mp4', 'video/mp4')", uploadId);
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO video_uploads (id, pet_id, source_key, content_type) "
+            + "VALUES (?, 1, 'source.mp4', 'video/mp4')", java.util.UUID.randomUUID()))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        assertThatThrownBy(() -> jdbc.update("UPDATE video_uploads SET status = 'READY' WHERE id = ?", uploadId))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
         jdbc.update("INSERT INTO posts (id, pet_id, body) VALUES (1, 1, 'Test post')");
         jdbc.update("INSERT INTO post_media (post_id, url, sort_order) VALUES (1, 'https://example.test/a', 0)");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO post_media (post_id, url, sort_order) "

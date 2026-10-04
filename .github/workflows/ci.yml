@@ -20,6 +20,8 @@ jobs:
           java-version: '21'
           cache: maven
           cache-dependency-path: backend/pom.xml
+      - name: Install video processor
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Test backend
         working-directory: backend
         run: ./mvnw test

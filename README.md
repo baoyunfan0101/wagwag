@@ -12,11 +12,11 @@ A pre-v1 pet social app built with Expo / React Native and a Java 21 Spring Boot
 | 6 | Territory claims, overlap/decay, area leaderboard |
 | 7 | Pet-care tasks, coarse public location, assignment, ratings, availability |
 | 8 | Direct messages, notifications, WebSocket updates, receipts, optional device push |
-| 9A | Single-video upload and playback in posts and communities |
+| 9A / 9B | Video posts, async transcoding/compression, thumbnails, upload progress/retry, configurable CDN delivery |
 
 ## Run locally
 
-Install Java 21, Node.js 24, npm, and Docker Desktop. From the repository root:
+Install Java 21, Node.js 24, npm, Docker Desktop, and FFmpeg/FFprobe. From the repository root:
 
 ~~~sh
 cp backend/.env.example backend/.env
@@ -44,4 +44,4 @@ This runs `cd backend && ./mvnw test`, mobile `npm run typecheck`, and `npm test
 - [Development roadmap](docs/WagWag_Development_Roadmap.md): module phases and remaining work.
 - [Project instructions](AGENTS.md): branch workflow and release policy.
 
-Before v1, schema and internal API contracts may change directly. The current baseline includes video posts; older local PostgreSQL volumes must be recreated using the [PostgreSQL-only reset](docs/DEVELOPMENT.md#pre-release-database-policy). No historical database upgrade path is maintained. Compatibility and incremental database migrations begin with the first release.
+Before v1, schema and internal API contracts may change directly. The current baseline includes video processing jobs and thumbnails; older local PostgreSQL volumes must be recreated using the [PostgreSQL-only reset](docs/DEVELOPMENT.md#pre-release-database-policy). No historical database upgrade path is maintained. Compatibility and incremental database migrations begin with the first release.
