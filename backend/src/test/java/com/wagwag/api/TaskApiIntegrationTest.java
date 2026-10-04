@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.notification.NotificationService;
 import com.wagwag.api.social.SocialPairLock;
 import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.task.TaskService;
@@ -60,6 +61,7 @@ class TaskApiIntegrationTest {
     @Autowired PetRepository pets;
     @Autowired SocialRestrictions social;
     @Autowired SocialPairLock pairLock;
+    @Autowired NotificationService notifications;
     @Autowired TransactionTemplate transactions;
 
     @BeforeEach
@@ -139,7 +141,7 @@ class TaskApiIntegrationTest {
     void concurrentDifferentPetsCannotBothAccept() throws Exception {
         jdbc.update("INSERT INTO pets (id, owner_id, name, species, gender) "
             + "VALUES (1001, 1, 'Pip', 'Dog', 'UNKNOWN') ON CONFLICT (id) DO NOTHING");
-        TaskService other = new TaskService(jdbc, pets, social, pairLock, 1001);
+        TaskService other = new TaskService(jdbc, pets, social, pairLock, notifications, 1001);
         AtomicInteger accepted = new AtomicInteger();
         AtomicInteger conflicted = new AtomicInteger();
         CountDownLatch ready = new CountDownLatch(2);
@@ -438,7 +440,7 @@ class TaskApiIntegrationTest {
         mvc.perform(put("/api/tasks/1000/rating").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"score\":5}"))
             .andExpect(status().isForbidden());
-        TaskService creator = new TaskService(jdbc, pets, social, pairLock, 1000);
+        TaskService creator = new TaskService(jdbc, pets, social, pairLock, notifications, 1000);
         transactions.executeWithoutResult(status -> creator.rate(1000, new TaskRatingInput(4, "Great walk")));
         mvc.perform(get("/api/tasks/profile"))
             .andExpect(jsonPath("$.averageRating").value(4.0))
@@ -474,6 +476,39 @@ class TaskApiIntegrationTest {
         return jdbc.queryForObject("INSERT INTO tasks (creator_pet_id, title, description, category, latitude, longitude) "
             + "VALUES (1000, 'Nearby help', 'Walk a dog', 'DOG_WALKING', ?, ?) RETURNING id", Long.class,
             latitude, longitude);
+    }
+
+    @Test
+    void taskTransitionsNotifyOnlyOtherParticipantWithoutDuplicateRetryNotifications() throws Exception {
+        long own = createTask();
+        TaskService other = new TaskService(jdbc, pets, social, pairLock, notifications, 1000);
+        transactions.executeWithoutResult(tx -> other.accept(own));
+        transactions.executeWithoutResult(tx -> other.accept(own));
+        mvc.perform(get("/api/notifications"))
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].type").value("TASK_STATUS"))
+            .andExpect(jsonPath("$.items[0].targetId").value(own))
+            .andExpect(jsonPath("$.items[0].taskStatus").value("ACCEPTED"));
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1, 1000)");
+        transactions.executeWithoutResult(tx -> other.start(own));
+        transactions.executeWithoutResult(tx -> other.complete(own));
+        mvc.perform(get("/api/notifications"))
+            .andExpect(jsonPath("$.items.length()").value(3))
+            .andExpect(jsonPath("$.items[0].taskStatus").value("COMPLETED"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM notifications WHERE recipient_pet_id = 1000", Long.class))
+            .isZero();
+    }
+
+    @Test
+    void creatorCancellationNotifiesAssigneeAndRejectedTransitionCreatesNoNotification() throws Exception {
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        TaskService creator = new TaskService(jdbc, pets, social, pairLock, notifications, 1000);
+        transactions.executeWithoutResult(tx -> creator.cancel(1000));
+        mvc.perform(get("/api/notifications"))
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].taskStatus").value("CANCELLED"));
+        mvc.perform(post("/api/tasks/1000/start")).andExpect(status().isConflict());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM notifications", Long.class)).isEqualTo(2);
     }
 
     private long createTask() throws Exception {

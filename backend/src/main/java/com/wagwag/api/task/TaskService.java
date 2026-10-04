@@ -1,6 +1,7 @@
 package com.wagwag.api.task;
 
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.notification.NotificationService;
 import com.wagwag.api.social.SocialPairLock;
 import com.wagwag.api.social.SocialRestrictions;
 import java.math.BigDecimal;
@@ -35,14 +36,17 @@ public class TaskService {
     private final PetRepository pets;
     private final SocialRestrictions social;
     private final SocialPairLock pairLock;
+    private final NotificationService notifications;
     private final long devPetId;
 
     public TaskService(JdbcTemplate jdbc, PetRepository pets, SocialRestrictions social, SocialPairLock pairLock,
+                       NotificationService notifications,
                        @Value("${app.dev-pet-id:0}") long devPetId) {
         this.jdbc = jdbc;
         this.pets = pets;
         this.social = social;
         this.pairLock = pairLock;
+        this.notifications = notifications;
         this.devPetId = devPetId;
     }
 
@@ -246,11 +250,13 @@ public class TaskService {
 
     private void transition(long id, long actor, String status) {
         jdbc.update("UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", status, id);
-        event(id, actor, status);
+        long eventId = event(id, actor, status);
+        notifications.taskStatus(id, actor, eventId);
     }
 
-    private void event(long id, long actor, String status) {
-        jdbc.update("INSERT INTO task_events (task_id, actor_pet_id, status) VALUES (?, ?, ?)", id, actor, status);
+    private long event(long id, long actor, String status) {
+        return jdbc.queryForObject("INSERT INTO task_events (task_id, actor_pet_id, status) VALUES (?, ?, ?) RETURNING id",
+            Long.class, id, actor, status);
     }
 
     private static void validatePage(int limit, int page) {

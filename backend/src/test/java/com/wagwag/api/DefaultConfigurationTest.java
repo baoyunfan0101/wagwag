@@ -38,7 +38,8 @@ class DefaultConfigurationTest {
         for (String table : new String[] {"posts", "post_media", "likes", "comments",
                 "pet_follows", "pet_blocks", "pet_mutes", "communities",
                 "community_members", "post_communities", "tasks", "task_assignments",
-                "task_events", "task_ratings", "task_availability"}) {
+                "task_events", "task_ratings", "task_availability", "conversations",
+                "conversation_members", "messages", "notifications"}) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class)).isZero();
         }
 
