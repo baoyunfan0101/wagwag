@@ -88,7 +88,7 @@ export default function NewTaskScreen() {
         <TextInput style={[styles.input, styles.coordinate]} value={longitude} onChangeText={setLongitude}
           keyboardType="decimal-pad" placeholder="Longitude" />
       </View>
-      <Text style={styles.note}>Task locations are visible to everyone browsing available tasks.</Text>
+      <Text style={styles.note}>Only an approximate location is public. Exact coordinates are shared with the assigned pet.</Text>
       {error && <Text style={styles.error}>{error}</Text>}
       <Pressable style={styles.button} onPress={() => void save()} disabled={saving}>
         {saving ? <ActivityIndicator color="white" /> : <Text style={styles.buttonText}>Post task</Text>}

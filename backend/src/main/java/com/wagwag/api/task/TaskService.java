@@ -1,6 +1,8 @@
 package com.wagwag.api.task;
 
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.social.SocialPairLock;
+import com.wagwag.api.social.SocialRestrictions;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -23,12 +25,16 @@ public class TaskService {
 
     private final JdbcTemplate jdbc;
     private final PetRepository pets;
+    private final SocialRestrictions social;
+    private final SocialPairLock pairLock;
     private final long devPetId;
 
-    public TaskService(JdbcTemplate jdbc, PetRepository pets,
+    public TaskService(JdbcTemplate jdbc, PetRepository pets, SocialRestrictions social, SocialPairLock pairLock,
                        @Value("${app.dev-pet-id:0}") long devPetId) {
         this.jdbc = jdbc;
         this.pets = pets;
+        this.social = social;
+        this.pairLock = pairLock;
         this.devPetId = devPetId;
     }
 
@@ -49,10 +55,14 @@ public class TaskService {
 
     @Transactional(readOnly = true)
     public TaskResponse detail(long id) {
-        actorId();
-        List<TaskResponse> rows = jdbc.query(SELECT + "WHERE t.id = ?", TaskService::response, id);
+        long actor = actorId();
+        List<TaskRecord> rows = jdbc.query(SELECT + "WHERE t.id = ?", TaskService::record, id);
         if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Task not found");
-        return rows.getFirst();
+        TaskRecord task = rows.getFirst();
+        if (!task.participant(actor) && social.blockedEitherWay(actor, task.creatorPetId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Task not found");
+        }
+        return response(task, actor);
     }
 
     @Transactional(readOnly = true)
@@ -64,18 +74,21 @@ public class TaskService {
         String filter;
         Object[] args;
         if ("open".equals(scope)) {
-            filter = "WHERE t.status = 'OPEN' ";
-            args = new Object[] {limit + 1, limit * page};
+            filter = "WHERE t.status = 'OPEN' AND NOT EXISTS (SELECT 1 FROM pet_blocks b "
+                + "WHERE (b.blocker_pet_id = ? AND b.blocked_pet_id = t.creator_pet_id) "
+                + "OR (b.blocker_pet_id = t.creator_pet_id AND b.blocked_pet_id = ?)) ";
+            args = new Object[] {actor, actor, limit + 1, limit * page};
         } else if ("mine".equals(scope)) {
             filter = "WHERE t.creator_pet_id = ? OR a.pet_id = ? ";
             args = new Object[] {actor, actor, limit + 1, limit * page};
         } else {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid task scope");
         }
-        List<TaskResponse> rows = jdbc.query(SELECT + filter
-            + "ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?", TaskService::response, args);
+        List<TaskRecord> rows = jdbc.query(SELECT + filter
+            + "ORDER BY t.created_at DESC, t.id DESC LIMIT ? OFFSET ?", TaskService::record, args);
         boolean more = rows.size() > limit;
-        return new TaskPage(more ? rows.subList(0, limit) : rows, more ? page + 1 : null);
+        List<TaskRecord> pageRows = more ? rows.subList(0, limit) : rows;
+        return new TaskPage(pageRows.stream().map(task -> response(task, actor)).toList(), more ? page + 1 : null);
     }
 
     @Transactional
@@ -87,6 +100,12 @@ public class TaskService {
         }
         if ("ACCEPTED".equals(task.status()) && task.assigneePetId() != null
             && actor == task.assigneePetId()) return detail(id);
+        // Serialize new acceptance with social block changes before checking PostgreSQL.
+        pairLock.lock(actor, task.creatorPetId());
+        if (social.blockedEitherWay(actor, task.creatorPetId())
+            && (task.assigneePetId() == null || actor != task.assigneePetId())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Task not found");
+        }
         requireStatus(task, "OPEN");
         jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (?, ?)", id, actor);
         jdbc.update("UPDATE tasks SET status = 'ACCEPTED', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id);
@@ -153,8 +172,8 @@ public class TaskService {
         return devPetId;
     }
 
-    private static TaskResponse response(ResultSet rs, int row) throws SQLException {
-        return new TaskResponse(rs.getLong("id"), rs.getLong("creator_pet_id"),
+    private static TaskRecord record(ResultSet rs, int row) throws SQLException {
+        return new TaskRecord(rs.getLong("id"), rs.getLong("creator_pet_id"),
             rs.getString("creator_name"), rs.getString("title"), rs.getString("description"),
             TaskInput.Category.valueOf(rs.getString("category")), rs.getDouble("latitude"),
             rs.getDouble("longitude"), rs.getString("status"),
@@ -162,11 +181,32 @@ public class TaskService {
             rs.getTimestamp("created_at").toInstant(), rs.getTimestamp("updated_at").toInstant());
     }
 
+    private static TaskResponse response(TaskRecord task, long actor) {
+        boolean exact = task.participant(actor);
+        return new TaskResponse(task.id(), task.creatorPetId(), task.creatorName(), task.title(),
+            task.description(), task.category(), exact ? task.latitude() : approximate(task.latitude()),
+            exact ? task.longitude() : approximate(task.longitude()), exact, task.status(),
+            task.assigneePetId(), task.assigneeName(), task.createdAt(), task.updatedAt());
+    }
+
+    private static double approximate(double coordinate) {
+        return Math.round(coordinate * 100.0) / 100.0;
+    }
+
+    private record TaskRecord(long id, long creatorPetId, String creatorName, String title,
+                              String description, TaskInput.Category category, double latitude,
+                              double longitude, String status, Long assigneePetId, String assigneeName,
+                              Instant createdAt, Instant updatedAt) {
+        boolean participant(long actor) {
+            return actor == creatorPetId || (assigneePetId != null && actor == assigneePetId);
+        }
+    }
+
     private record LockedTask(long creatorPetId, String status, Long assigneePetId) {}
 
     public record TaskResponse(long id, long creatorPetId, String creatorName, String title,
                                String description, TaskInput.Category category, double latitude,
-                               double longitude, String status, Long assigneePetId, String assigneeName,
+                               double longitude, boolean locationExact, String status, Long assigneePetId, String assigneeName,
                                Instant createdAt, Instant updatedAt) {}
     public record TaskPage(List<TaskResponse> items, Integer nextPage) {}
 }

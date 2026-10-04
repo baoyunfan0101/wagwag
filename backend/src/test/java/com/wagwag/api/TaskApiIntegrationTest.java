@@ -9,6 +9,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.jayway.jsonpath.JsonPath;
 import com.wagwag.api.pet.PetRepository;
+import com.wagwag.api.social.SocialPairLock;
+import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.task.TaskService;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -17,6 +19,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -52,13 +56,18 @@ class TaskApiIntegrationTest {
     @Autowired MockMvc mvc;
     @Autowired JdbcTemplate jdbc;
     @Autowired PetRepository pets;
+    @Autowired SocialRestrictions social;
+    @Autowired SocialPairLock pairLock;
     @Autowired TransactionTemplate transactions;
 
     @BeforeEach
     void clean() {
+        jdbc.update("DELETE FROM pet_blocks");
+        jdbc.update("DELETE FROM pet_mutes");
+        jdbc.update("UPDATE pets SET private_profile = FALSE WHERE id = 1000");
         jdbc.update("DELETE FROM task_assignments");
         jdbc.update("DELETE FROM tasks WHERE id <> 1000");
-        jdbc.update("UPDATE tasks SET status = 'OPEN' WHERE id = 1000");
+        jdbc.update("UPDATE tasks SET status = 'OPEN', latitude = 29.760412, longitude = -95.369845 WHERE id = 1000");
     }
 
     @Test
@@ -109,6 +118,11 @@ class TaskApiIntegrationTest {
         long id = createTask();
         jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (?, 1000)", id);
         jdbc.update("UPDATE tasks SET status = 'ACCEPTED' WHERE id = ?", id);
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1000, 1)");
+        mvc.perform(get("/api/tasks/{id}", id)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.locationExact").value(true));
+        mvc.perform(get("/api/tasks").param("scope", "mine"))
+            .andExpect(jsonPath("$.items[0].id").value(id));
         mvc.perform(post("/api/tasks/{id}/cancel", id)).andExpect(status().isOk())
             .andExpect(jsonPath("$.status").value("CANCELLED"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_assignments WHERE task_id = ?",
@@ -120,7 +134,7 @@ class TaskApiIntegrationTest {
     void concurrentDifferentPetsCannotBothAccept() throws Exception {
         jdbc.update("INSERT INTO pets (id, owner_id, name, species, gender) "
             + "VALUES (1001, 1, 'Pip', 'Dog', 'UNKNOWN') ON CONFLICT (id) DO NOTHING");
-        TaskService other = new TaskService(jdbc, pets, 1001);
+        TaskService other = new TaskService(jdbc, pets, social, pairLock, 1001);
         AtomicInteger accepted = new AtomicInteger();
         AtomicInteger conflicted = new AtomicInteger();
         CountDownLatch ready = new CountDownLatch(2);
@@ -182,11 +196,131 @@ class TaskApiIntegrationTest {
             .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void blockEitherDirectionHidesTaskAndPreventsNewAssignment(boolean creatorBlocksViewer) throws Exception {
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (?, ?)",
+            creatorBlocksViewer ? 1000 : 1, creatorBlocksViewer ? 1 : 1000);
+        long ownTask = createTask();
+        mvc.perform(get("/api/tasks").param("limit", "1"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].id").value(ownTask))
+            .andExpect(jsonPath("$.nextPage").value((Object) null));
+        mvc.perform(get("/api/tasks/1000")).andExpect(status().isNotFound());
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isNotFound());
+        assertThat(jdbc.queryForObject("SELECT status FROM tasks WHERE id = 1000", String.class))
+            .isEqualTo("OPEN");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_assignments", Long.class)).isZero();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void existingAssigneeKeepsExactLocationAndCanFinishAfterBlock(boolean creatorBlocksViewer) throws Exception {
+        mvc.perform(post("/api/tasks/1000/accept"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.locationExact").value(true));
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (?, ?)",
+            creatorBlocksViewer ? 1000 : 1, creatorBlocksViewer ? 1 : 1000);
+        mvc.perform(get("/api/tasks/1000")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.locationExact").value(true))
+            .andExpect(jsonPath("$.latitude").value(29.760412))
+            .andExpect(jsonPath("$.longitude").value(-95.369845));
+        mvc.perform(get("/api/tasks").param("scope", "mine"))
+            .andExpect(jsonPath("$.items[0].id").value(1000))
+            .andExpect(jsonPath("$.items[0].locationExact").value(true));
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM task_assignments WHERE task_id = 1000",
+            Long.class)).isEqualTo(1);
+        mvc.perform(post("/api/tasks/1000/start")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("IN_PROGRESS"));
+        mvc.perform(post("/api/tasks/1000/complete")).andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("COMPLETED"))
+            .andExpect(jsonPath("$.locationExact").value(true));
+    }
+
+    @Test
+    void publicCoordinatesAreApproximateUntilAssigned() throws Exception {
+        String list = mvc.perform(get("/api/tasks"))
+            .andExpect(jsonPath("$.items[0].locationExact").value(false))
+            .andExpect(jsonPath("$.items[0].latitude").value(29.76))
+            .andExpect(jsonPath("$.items[0].longitude").value(-95.37))
+            .andReturn().getResponse().getContentAsString();
+        String detail = mvc.perform(get("/api/tasks/1000"))
+            .andExpect(jsonPath("$.locationExact").value(false))
+            .andExpect(jsonPath("$.latitude").value(29.76))
+            .andExpect(jsonPath("$.longitude").value(-95.37))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(list).doesNotContain("29.760412", "-95.369845");
+        assertThat(detail).doesNotContain("29.760412", "-95.369845");
+        assertThat(jdbc.queryForObject("SELECT latitude FROM tasks WHERE id = 1000", Double.class))
+            .isEqualTo(29.760412);
+        mvc.perform(post("/api/tasks/1000/accept"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.locationExact").value(true))
+            .andExpect(jsonPath("$.latitude").value(29.760412))
+            .andExpect(jsonPath("$.longitude").value(-95.369845));
+        mvc.perform(get("/api/tasks/1000"))
+            .andExpect(jsonPath("$.locationExact").value(true))
+            .andExpect(jsonPath("$.latitude").value(29.760412))
+            .andExpect(jsonPath("$.longitude").value(-95.369845));
+        mvc.perform(get("/api/tasks").param("scope", "mine"))
+            .andExpect(jsonPath("$.items[0].locationExact").value(true))
+            .andExpect(jsonPath("$.items[0].latitude").value(29.760412))
+            .andExpect(jsonPath("$.items[0].longitude").value(-95.369845));
+    }
+
+    @Test
+    void creatorReceivesExactLocationOnEverySurface() throws Exception {
+        long id = createTask();
+        mvc.perform(get("/api/tasks/{id}", id))
+            .andExpect(jsonPath("$.locationExact").value(true))
+            .andExpect(jsonPath("$.latitude").value(29.760412))
+            .andExpect(jsonPath("$.longitude").value(-95.369845));
+        for (String scope : new String[] {"open", "mine"}) {
+            mvc.perform(get("/api/tasks").param("scope", scope))
+                .andExpect(jsonPath("$.items[0].id").value(id))
+                .andExpect(jsonPath("$.items[0].locationExact").value(true))
+                .andExpect(jsonPath("$.items[0].latitude").value(29.760412))
+                .andExpect(jsonPath("$.items[0].longitude").value(-95.369845));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ACCEPTED", "COMPLETED", "CANCELLED"})
+    void assignmentAndTerminalStatesDoNotExposeExactLocationToThirdParty(String taskStatus) throws Exception {
+        jdbc.update("INSERT INTO pets (id, owner_id, name, species, gender) "
+            + "VALUES (1001, 1, 'Pip', 'Dog', 'UNKNOWN') ON CONFLICT (id) DO NOTHING");
+        jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (1000, 1001)");
+        jdbc.update("UPDATE tasks SET status = ? WHERE id = 1000", taskStatus);
+        String detail = mvc.perform(get("/api/tasks/1000"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.locationExact").value(false))
+            .andExpect(jsonPath("$.latitude").value(29.76))
+            .andExpect(jsonPath("$.longitude").value(-95.37))
+            .andReturn().getResponse().getContentAsString();
+        assertThat(detail).doesNotContain("29.760412", "-95.369845");
+    }
+
+    @Test
+    void privateProfilesAndMutesDoNotHideMarketplaceTasks() throws Exception {
+        jdbc.update("UPDATE pets SET private_profile = TRUE WHERE id = 1000");
+        jdbc.update("INSERT INTO pet_mutes (muter_pet_id, muted_pet_id) VALUES (1, 1000)");
+        mvc.perform(get("/api/tasks"))
+            .andExpect(jsonPath("$.items[0].id").value(1000));
+        mvc.perform(get("/api/tasks/1000")).andExpect(status().isOk());
+        mvc.perform(post("/api/tasks/1000/accept")).andExpect(status().isOk());
+    }
+
     private long createTask() throws Exception {
         String body = mvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON)
             .content("{\"title\":\"Walk Mochi\",\"description\":\"Park visit\","
-                + "\"category\":\"DOG_WALKING\",\"latitude\":29.76,\"longitude\":-95.37}"))
-            .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+                + "\"category\":\"DOG_WALKING\",\"latitude\":29.760412,\"longitude\":-95.369845}"))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.locationExact").value(true))
+            .andExpect(jsonPath("$.latitude").value(29.760412))
+            .andExpect(jsonPath("$.longitude").value(-95.369845))
+            .andReturn().getResponse().getContentAsString();
         return ((Number) JsonPath.read(body, "$.id")).longValue();
     }
 }

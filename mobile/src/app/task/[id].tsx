@@ -55,8 +55,8 @@ export default function TaskDetailScreen() {
         <Text style={styles.title}>{task.title}</Text>
         <Text style={styles.note}>{task.category.replaceAll('_', ' ')} | Posted by {task.creatorName}</Text>
         <Text style={styles.body}>{task.description}</Text>
-        <Text style={styles.label}>Location</Text>
-        <Text style={styles.note}>{task.latitude.toFixed(5)}, {task.longitude.toFixed(5)}</Text>
+        <Text style={styles.label}>{task.locationExact ? 'Task location' : 'Approximate location'}</Text>
+        <Text style={styles.note}>{task.latitude.toFixed(task.locationExact ? 5 : 2)}, {task.longitude.toFixed(task.locationExact ? 5 : 2)}</Text>
         {task.assigneeName && <><Text style={styles.label}>Accepted by</Text>
           <Text style={styles.note}>{task.assigneeName}</Text></>}
         <Text style={styles.note}>Posted {new Date(task.createdAt).toLocaleString()}</Text>

@@ -96,7 +96,7 @@ export type TaskStatus = 'OPEN' | 'ACCEPTED' | 'IN_PROGRESS' | 'COMPLETED' | 'CA
 export type TaskInput = { title: string; description: string; category: TaskCategory;
   latitude: number; longitude: number };
 export type PetTask = TaskInput & { id: number; creatorPetId: number; creatorName: string;
-  status: TaskStatus; assigneePetId: number | null; assigneeName: string | null;
+  locationExact: boolean; status: TaskStatus; assigneePetId: number | null; assigneeName: string | null;
   createdAt: string; updatedAt: string };
 export type TaskPage = { items: PetTask[]; nextPage: number | null };
 export type Comment = {
