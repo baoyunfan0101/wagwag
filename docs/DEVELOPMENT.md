@@ -57,7 +57,7 @@ For a physical phone, replace `localhost` in `mobile/.env`, `backend/.env`'s `S3
 
 ## Development identities
 
-Flyway creates schema only. The `dev` profile seeds Mochi (user/pet ID 1), Biscuit (user/pet ID 1000), and Biscuit's open demo task outside Flyway. Repeated startups preserve existing rows and do not reopen a completed demo task. The default profile creates zero users/pets and has no development identity.
+Flyway creates schema only. The `dev` profile seeds Mochi (user/pet ID 1), Biscuit (user/pet ID 1000), Biscuit's open demo task, and an available second-hand listing outside Flyway. Repeated startups preserve existing rows and do not reopen a completed demo task or listing. The default profile creates zero users/pets and has no development identity.
 
 To try both sides of tasks and messaging, set `APP_DEV_PET_ID=1000` in `backend/.env` and `EXPO_PUBLIC_DEV_PET_ID=1000` in `mobile/.env`, then restart both processes. Restore both to `1` for Mochi. The fixed development identity is not authentication; authenticated identity and authorization are required before public deployment.
 
@@ -73,7 +73,7 @@ docker compose up -d postgres
 
 These commands delete local PostgreSQL data, including walks, messages, posts, and profiles. They preserve SeaweedFS data. If you set `COMPOSE_PROJECT_NAME`, replace the volume name with that project's PostgreSQL volume. No application command deletes this data automatically.
 
-The current baseline includes `video_uploads` and `posts.video_thumbnail_url` for Module 9B. Reset an older local PostgreSQL volume before using this code. Starting with v1, the committed schema becomes production history; later schema changes use incremental Flyway migrations, and released API compatibility is evaluated explicitly.
+The current baseline includes second-hand `listings`, `listing_media`, and `listing_favorites`. Reset an older local PostgreSQL volume before using this code. Starting with v1, the committed schema becomes production history; later schema changes use incremental Flyway migrations, and released API compatibility is evaluated explicitly.
 
 ## Video processing and media delivery
 
@@ -121,6 +121,8 @@ To check JavaScript bundles for all supported platforms:
 cd mobile
 npx expo export --platform all --output-dir /tmp/wagwag-export
 ~~~
+
+For the second-hand flow, browse Biscuit's seeded listing as Mochi, save it, open **Contact seller**, and mark a listing sold after switching to its seller's development identity. Phase 10A accepts optional HTTPS image links; phone photo upload is planned for Phase 10B.
 
 ### Manual device checks
 

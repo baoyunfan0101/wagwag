@@ -39,7 +39,8 @@ class DefaultConfigurationTest {
                 "pet_follows", "pet_blocks", "pet_mutes", "communities",
                 "community_members", "post_communities", "tasks", "task_assignments",
                 "task_events", "task_ratings", "task_availability", "conversations",
-                "conversation_members", "messages", "notifications", "push_devices", "push_deliveries"}) {
+                "conversation_members", "messages", "notifications", "push_devices", "push_deliveries",
+                "listings", "listing_media", "listing_favorites"}) {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class)).isZero();
         }
 
@@ -89,6 +90,20 @@ class DefaultConfigurationTest {
             + "VALUES (1, 1, 'Walk', 'Walk the dog', 'DOG_WALKING', 29.76, -95.37)");
         jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (1, 2)");
         assertThatThrownBy(() -> jdbc.update("INSERT INTO task_assignments (task_id, pet_id) VALUES (1, 1)"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        jdbc.update("INSERT INTO listings (id, seller_pet_id, title, description, price_cents) "
+            + "VALUES (1, 1, 'Leash', 'Clean pet gear', 1200)");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO listings (seller_pet_id, title, description, price_cents) "
+            + "VALUES (1, 'Invalid', 'Negative price', -1)"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.update("INSERT INTO listing_media (listing_id, url, sort_order) "
+            + "VALUES (1, 'https://example.test/a', 0)");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO listing_media (listing_id, url, sort_order) "
+            + "VALUES (1, 'https://example.test/b', 0)"))
+            .isInstanceOf(DataIntegrityViolationException.class);
+        jdbc.update("INSERT INTO listing_favorites (listing_id, pet_id) VALUES (1, 2)");
+        assertThatThrownBy(() -> jdbc.update("INSERT INTO listing_favorites (listing_id, pet_id) VALUES (1, 2)"))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

@@ -990,6 +990,8 @@ Support pet-related goods and peer-to-peer listings.
 
 ## Phase 10A — Minimal End-to-End Solution
 
+Implemented: pet-scoped listings with optional HTTPS media links, newest-first cursor browsing, favorites, seller contact through direct messages, and an idempotent seller-only sold action. Phase 10B remains future work.
+
 Features:
 
 ```text

@@ -36,11 +36,17 @@ public class DevelopmentSeed implements ApplicationRunner {
             jdbc.update("INSERT INTO task_events (task_id, actor_pet_id, status) VALUES (1000, 1000, 'OPEN')");
         }
 
+        jdbc.update("INSERT INTO listings (id, seller_pet_id, title, description, price_cents) "
+            + "VALUES (1000, 1000, 'Adjustable dog leash', "
+            + "'Gently used leash for neighborhood walks.', 1200) ON CONFLICT (id) DO NOTHING");
+
         jdbc.queryForObject("SELECT setval('users_id_seq', GREATEST((SELECT MAX(id) FROM users), "
             + "(SELECT last_value FROM users_id_seq)), true)", Long.class);
         jdbc.queryForObject("SELECT setval('pets_id_seq', GREATEST((SELECT MAX(id) FROM pets), "
             + "(SELECT last_value FROM pets_id_seq)), true)", Long.class);
         jdbc.queryForObject("SELECT setval('tasks_id_seq', GREATEST((SELECT MAX(id) FROM tasks), "
             + "(SELECT last_value FROM tasks_id_seq)), true)", Long.class);
+        jdbc.queryForObject("SELECT setval('listings_id_seq', GREATEST((SELECT MAX(id) FROM listings), "
+            + "(SELECT last_value FROM listings_id_seq)), true)", Long.class);
     }
 }
