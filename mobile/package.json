@@ -39,7 +39,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/lib/walkRoute.test.mjs"
+    "test": "node --test src/lib/*.test.mjs"
   },
   "private": true
 }

@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
-  DEV_PET_ID, blockPet, followPet, getFollowStatus, getPet, mutePet, setPetPrivacy,
+  DEV_PET_ID, blockPet, followPet, getFollowStatus, getPet, mutePet, setPetPrivacy, openConversation,
   unblockPet, unfollowPet, unmutePet,
   type FollowStatus, type Pet,
 } from '@/lib/api';
@@ -45,6 +45,18 @@ export default function PetDetailScreen() {
     if (!social || busy) return;
     await updateSocial(() => social.followedByMe || social.requestedByMe
       ? unfollowPet(petId) : followPet(petId));
+  }
+
+  async function messagePet() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const conversation = await openConversation(petId);
+      setError(null);
+      router.push({ pathname: '/conversation/[id]', params: { id: String(conversation.id) } });
+    } catch {
+      setError('Could not start this conversation. Try again.');
+    } finally { setBusy(false); }
   }
 
   async function updateSocial(action: () => Promise<FollowStatus>) {
@@ -117,6 +129,10 @@ export default function PetDetailScreen() {
             <Text style={styles.note}>Private posts and follow lists are visible only to approved followers.</Text>
             <Pressable onPress={() => showList('requests')}><Text style={styles.requests}>Review follow requests</Text></Pressable>
           </> : <>
+            {!social.blockedByMe && <Pressable style={[styles.button, styles.secondary]}
+              onPress={() => void messagePet()} disabled={busy}>
+              <Text style={[styles.buttonText, styles.secondaryText]}>Message pet</Text>
+            </Pressable>}
             {!social.blockedByMe && <Pressable style={[styles.button,
               (social.followedByMe || social.requestedByMe) && styles.secondary]}
               onPress={() => void toggleFollow()} disabled={busy}>

@@ -98,6 +98,14 @@ export default function ProfileScreen() {
             <Ionicons name="briefcase-outline" size={18} color={colors.green} />
             <Text style={styles.privacyText}>Pet-care tasks</Text>
           </Pressable>
+          <Pressable style={styles.privacyButton} onPress={() => router.push('/messages')}>
+            <Ionicons name="chatbubbles-outline" size={18} color={colors.green} />
+            <Text style={styles.privacyText}>Messages</Text>
+          </Pressable>
+          <Pressable style={styles.privacyButton} onPress={() => router.push('/notifications')}>
+            <Ionicons name="notifications-outline" size={18} color={colors.green} />
+            <Text style={styles.privacyText}>Notifications</Text>
+          </Pressable>
           <Text style={styles.footer}>Made for the pets who make life better.</Text>
         </> : null}
     </ScrollView>

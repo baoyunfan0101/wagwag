@@ -855,11 +855,16 @@ notifications
 
 The client may poll periodically.
 
+The current 8A implementation includes direct two-pet conversations, member-only paginated history,
+idempotent text sends, foreground chat polling, and a persisted in-app notification center for
+messages and task status changes. Existing PostgreSQL block rules prevent new messaging; members
+can still read earlier conversation history. Device push, WebSocket, and message receipts remain 8B.
+
 ### Done Criteria
 
-- [ ] Two users can exchange messages
-- [ ] Conversation history persists
-- [ ] Basic in-app notifications work
+- [x] Two users can exchange messages
+- [x] Conversation history persists
+- [x] Basic in-app notifications work
 
 ---
 
