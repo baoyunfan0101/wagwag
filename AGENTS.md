@@ -5,6 +5,13 @@
 - Follow the activated global Git workflow when changing branches, committing, pushing, or opening a PR.
 - Develop on a task branch from `main` and commit focused changes. Open or merge a PR only when the user requests it.
 
+## Project maintenance
+
+- Keep setup and environment details in `docs/DEVELOPMENT.md`, API contracts in `docs/API.md`, and the module plan in `docs/WagWag_Development_Roadmap.md`. Keep the root README as the entry point.
+- Keep the pre-v1 version aligned between `backend/pom.xml` (with its snapshot suffix), `mobile/package.json`, `mobile/package-lock.json`, and `mobile/app.json`.
+- `make check` runs backend tests, mobile typechecking, and mobile tests. Keep environment examples and these commands current when changing configuration or dependencies.
+- Native bundle export does not verify device playback, GPS/background permissions, or push delivery. Record any hardware checks that still require a configured device.
+
 ## Pre-release schema and API policy
 
 - Before the first v1 release, current code is the source of truth. Keep one complete Flyway schema baseline at `backend/src/main/resources/db/migration/V1__baseline.sql`.

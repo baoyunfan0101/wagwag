@@ -2,6 +2,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import { File } from 'expo-file-system';
 import type { ImagePickerAsset } from 'expo-image-picker';
 import { Platform } from 'react-native';
+import { validateVideoSize, videoContentType } from './postVideo';
 
 export type Gender = 'MALE' | 'FEMALE' | 'UNKNOWN';
 export type PetInput = {
@@ -41,10 +42,11 @@ export type FollowStatus = {
   mutedByMe: boolean;
 };
 
-export type PostInput = { body: string | null; imageKeys: string[]; communityId?: number };
+export type PostInput = { body: string | null; imageKeys: string[]; videoKey?: string; communityId?: number };
 export type Post = {
   body: string | null;
   imageUrls: string[];
+  videoUrl: string | null;
   id: number;
   petId: number;
   petName: string;
@@ -429,6 +431,24 @@ export async function uploadPostImage(uri: string): Promise<string> {
   } catch (cause) {
     if (cause instanceof Error && cause.message.startsWith('Image upload failed')) throw cause;
     throw new Error('Cannot reach object storage. Check its network address and CORS settings.');
+  }
+  return ticket.key;
+}
+
+export async function uploadPostVideo(asset: ImagePickerAsset): Promise<string> {
+  const contentType = videoContentType(asset);
+  const video = Platform.OS === 'web' ? (asset.file || await fetch(asset.uri).then(result => result.blob()))
+    : new File(asset.uri);
+  if (!video) throw new Error('Could not read the selected video.');
+  validateVideoSize(video.size);
+  const ticket = await request<{ key: string; uploadUrl: string; headers: Record<string, string> }>(
+    '/api/posts/video-uploads', { method: 'POST', body: JSON.stringify({ contentType }) },
+  );
+  try {
+    const result = await expoFetch(ticket.uploadUrl, { method: 'PUT', headers: ticket.headers, body: video });
+    if (!result.ok) throw new Error('Video upload failed. Please try again.');
+  } catch {
+    throw new Error('Video upload failed. Check your network and try again.');
   }
   return ticket.key;
 }

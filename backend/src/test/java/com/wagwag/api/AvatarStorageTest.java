@@ -3,14 +3,15 @@ package com.wagwag.api;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.wagwag.api.storage.AvatarStorage;
+import com.wagwag.api.storage.S3Objects;
 import java.net.URI;
 import org.junit.jupiter.api.Test;
 
 class AvatarStorageTest {
     @Test
     void signsUploadForThePetsOwnKey() {
-        AvatarStorage storage = new AvatarStorage("avatars", "us-east-1", "http://localhost:9000",
-            "https://cdn.example.test/avatars", "testaccess", "testsecret");
+        AvatarStorage storage = new AvatarStorage(new S3Objects("avatars", "us-east-1", "http://localhost:9000",
+            "https://cdn.example.test/avatars", "testaccess", "testsecret"));
 
         var ticket = storage.prepare(42, "image/png");
 

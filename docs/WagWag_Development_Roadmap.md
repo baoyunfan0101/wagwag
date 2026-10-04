@@ -923,6 +923,12 @@ Extend social posts from photo/text into short-form video.
 
 ## Phase 9A — Minimal End-to-End Solution
 
+Implemented: one video or up to four photos per post, create-only S3 upload,
+metadata verification, and on-demand playback in Feed, post detail, and
+community posts. MP4/MOV/WebM uploads are limited to 50 MB. Native codec
+playback still needs the device checks in [DEVELOPMENT.md](DEVELOPMENT.md).
+Phase 9B processing, thumbnails, and CDN delivery remain future work.
+
 Features:
 
 ```text

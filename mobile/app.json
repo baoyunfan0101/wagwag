@@ -2,7 +2,7 @@
   "expo": {
     "name": "WagWag",
     "slug": "wagwag",
-    "version": "1.0.0",
+    "version": "0.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "wagwag",
@@ -27,7 +27,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Choose a photo for your pet's profile."
+          "photosPermission": "Choose photos and videos for your pet's profile and posts."
         }
       ],
       [
@@ -38,14 +38,18 @@
           "imageWidth": 76
         }
       ],
-      ["expo-location", {
-        "locationWhenInUsePermission": "WagWag needs your location to record a walk.",
-        "locationAlwaysAndWhenInUsePermission": "Allow WagWag to record your walk while the screen is locked.",
-        "isIosBackgroundLocationEnabled": true,
-        "isAndroidBackgroundLocationEnabled": true,
-        "isAndroidForegroundServiceEnabled": true
-      }],
-      "@rnmapbox/maps"
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "WagWag needs your location to record a walk.",
+          "locationAlwaysAndWhenInUsePermission": "Allow WagWag to record your walk while the screen is locked.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      "@rnmapbox/maps",
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true,

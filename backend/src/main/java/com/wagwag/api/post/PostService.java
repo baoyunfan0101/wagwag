@@ -7,7 +7,8 @@ import com.wagwag.api.community.CommunityService.CommunityLabel;
 import com.wagwag.api.social.PetFollowRepository;
 import com.wagwag.api.social.SocialRestrictions;
 import com.wagwag.api.storage.PostImageStorage;
-import com.wagwag.api.storage.PostImageStorage.UploadTicket;
+import com.wagwag.api.storage.PostVideoStorage;
+import com.wagwag.api.storage.S3Objects.UploadTicket;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
@@ -35,10 +36,11 @@ public class PostService {
     private final SocialRestrictions restrictions;
     private final CommunityService communities;
     private final PostImageStorage storage;
+    private final PostVideoStorage videos;
     private final long devPetId;
 
     public PostService(PostRepository posts, PostMediaRepository media, PostLikeRepository likes,
-                       CommentRepository comments, PetRepository pets, PostImageStorage storage,
+                       CommentRepository comments, PetRepository pets, PostImageStorage storage, PostVideoStorage videos,
                        PetFollowRepository follows, SocialRestrictions restrictions,
                        CommunityService communities,
                        @Value("${app.dev-pet-id:0}") long devPetId) {
@@ -48,6 +50,7 @@ public class PostService {
         this.comments = comments;
         this.pets = pets;
         this.storage = storage;
+        this.videos = videos;
         this.follows = follows;
         this.restrictions = restrictions;
         this.communities = communities;
@@ -58,8 +61,12 @@ public class PostService {
     public PostResponse create(PostInput input) {
         String body = trimNullable(input.body());
         List<String> keys = input.imageKeys() == null ? List.of() : input.imageKeys();
-        if (body == null && keys.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add text or an image");
+        String videoKey = input.videoKey();
+        if (videoKey != null && (videoKey.isBlank() || !keys.isEmpty())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Use photos or one video in a post");
+        }
+        if (body == null && keys.isEmpty() && videoKey == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Add text, photos, or a video");
         }
         if (keys.size() > 4 || keys.stream().anyMatch(key -> key == null || key.isBlank())
                 || new HashSet<>(keys).size() != keys.size()) {
@@ -70,8 +77,9 @@ public class PostService {
         if (input.communityId() != null) communities.requireMember(input.communityId(), pet.getId());
         List<String> urls = new ArrayList<>();
         for (String key : keys) urls.add(storage.verifyAndGetUrl(pet.getId(), key));
+        String videoUrl = videoKey == null ? null : videos.verifyAndGetUrl(pet.getId(), videoKey);
 
-        Post post = posts.saveAndFlush(new Post(pet, body));
+        Post post = posts.saveAndFlush(new Post(pet, body, videoUrl));
         if (input.communityId() != null) communities.attach(post.getId(), input.communityId());
         for (int index = 0; index < urls.size(); index++) {
             media.save(new PostMedia(post, urls.get(index), index));
@@ -83,6 +91,11 @@ public class PostService {
     @Transactional(readOnly = true)
     public UploadTicket prepareImage(String contentType) {
         return storage.prepare(actor().getId(), contentType);
+    }
+
+    @Transactional(readOnly = true)
+    public UploadTicket prepareVideo(String contentType) {
+        return videos.prepare(actor().getId(), contentType);
     }
 
     @Transactional(readOnly = true)
@@ -145,7 +158,7 @@ public class PostService {
             CommunityLabel label = labels.get(id);
             return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
                 label == null ? null : label.id(), label == null ? null : label.name(),
-                post.getBody(), urls, post.getCreatedAt(),
+                post.getBody(), urls, post.getVideoUrl(), post.getCreatedAt(),
                 likeCounts.getOrDefault(id, 0L), commentCounts.getOrDefault(id, 0L), likedIds.contains(id));
         }).toList();
         Post last = selected.getLast();
@@ -190,7 +203,7 @@ public class PostService {
         CommunityLabel label = communities.labels(List.of(id)).get(id);
         return new PostResponse(id, pet.getId(), pet.getName(), pet.getAvatarUrl(),
             label == null ? null : label.id(), label == null ? null : label.name(),
-            post.getBody(), urls, post.getCreatedAt(), likes.countByPost_Id(id),
+            post.getBody(), urls, post.getVideoUrl(), post.getCreatedAt(), likes.countByPost_Id(id),
             comments.countByPost_Id(id),
             devPetId > 0 && likes.existsByPost_IdAndPet_Id(id, devPetId));
     }

@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { Post } from '@/lib/api';
 import { colors } from '@/lib/theme';
+import { PostVideo } from './PostVideo';
 
 type Props = {
   post: Post;
@@ -10,9 +11,10 @@ type Props = {
   onCommunity?: () => void;
   onLike: () => void;
   likeBusy?: boolean;
+  videoVisible?: boolean;
 };
 
-export function PostCard({ post, onOpen, onPet, onCommunity, onLike, likeBusy = false }: Props) {
+export function PostCard({ post, onOpen, onPet, onCommunity, onLike, likeBusy = false, videoVisible = true }: Props) {
   const images = post.imageUrls;
   const content = <>
     <View style={styles.header}>
@@ -36,6 +38,7 @@ export function PostCard({ post, onOpen, onPet, onCommunity, onLike, likeBusy = 
     {onOpen ? <Pressable onPress={onOpen} accessibilityLabel={`View post by ${post.petName}`}>
       {content}
     </Pressable> : <View>{content}</View>}
+    {post.videoUrl && <PostVideo key={post.videoUrl} uri={post.videoUrl} visible={videoVisible} />}
     <View style={styles.actions}>
       <Pressable style={styles.action} onPress={onLike} disabled={likeBusy}
         accessibilityLabel={post.likedByMe ? 'Unlike post' : 'Like post'}>

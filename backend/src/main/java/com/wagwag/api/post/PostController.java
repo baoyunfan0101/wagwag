@@ -1,6 +1,6 @@
 package com.wagwag.api.post;
 
-import com.wagwag.api.storage.PostImageStorage.UploadTicket;
+import com.wagwag.api.storage.S3Objects.UploadTicket;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.net.URI;
@@ -34,6 +34,11 @@ public class PostController {
         return service.prepareImage(input.contentType());
     }
 
+    @PostMapping("/posts/video-uploads")
+    public UploadTicket prepareVideo(@Valid @RequestBody VideoUploadInput input) {
+        return service.prepareVideo(input.contentType());
+    }
+
     @GetMapping("/posts/{id}")
     public PostResponse get(@PathVariable long id) { return service.get(id); }
 
@@ -61,4 +66,5 @@ public class PostController {
     public List<CommentResponse> comments(@PathVariable long id) { return service.comments(id); }
 
     public record ImageUploadInput(@NotBlank String contentType) {}
+    public record VideoUploadInput(@NotBlank String contentType) {}
 }
