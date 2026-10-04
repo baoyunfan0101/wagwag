@@ -807,6 +807,10 @@ push notifications
 availability
 ```
 
+The current 7B implementation covers nearby discovery, distance sorting, PostgreSQL concurrency,
+ratings, task status history, and a simple acceptance-availability toggle. Push delivery is scheduled
+with Module 8's messaging and notification infrastructure.
+
 Later:
 
 ```text

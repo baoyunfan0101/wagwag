@@ -97,8 +97,13 @@ export type TaskInput = { title: string; description: string; category: TaskCate
   latitude: number; longitude: number };
 export type PetTask = TaskInput & { id: number; creatorPetId: number; creatorName: string;
   locationExact: boolean; status: TaskStatus; assigneePetId: number | null; assigneeName: string | null;
-  createdAt: string; updatedAt: string };
+  createdAt: string; updatedAt: string; rating: TaskRating | null };
 export type TaskPage = { items: PetTask[]; nextPage: number | null };
+export type TaskRating = { score: number; comment: string | null; updatedAt: string };
+export type TaskProfile = { petId: number; acceptingTasks: boolean; averageRating: number | null; ratingCount: number };
+export type TaskEvent = { id: number; actorPetId: number; actorName: string; status: TaskStatus; createdAt: string };
+export type NearbyTask = { task: PetTask; distanceMeters: number };
+export type NearbyTaskPage = { items: NearbyTask[]; nextPage: number | null };
 export type Comment = {
   id: number;
   postId: number;
@@ -286,6 +291,28 @@ export function getTasks(scope: 'open' | 'mine' = 'open', limit = 20, page = 0):
 
 export function getTask(id: number): Promise<PetTask> {
   return request<PetTask>(`/api/tasks/${id}`);
+}
+
+export function getNearbyTasks(latitude: number, longitude: number, page = 0): Promise<NearbyTaskPage> {
+  return request<NearbyTaskPage>(`/api/tasks/nearby?latitude=${latitude}&longitude=${longitude}&radiusMeters=5000&limit=20&page=${page}`);
+}
+
+export function getTaskProfile(): Promise<TaskProfile> {
+  return request<TaskProfile>('/api/tasks/profile');
+}
+
+export function setTaskAvailability(acceptingTasks: boolean): Promise<TaskProfile> {
+  return request<TaskProfile>('/api/tasks/availability', { method: 'PUT', body: JSON.stringify({ acceptingTasks }) });
+}
+
+export function getTaskHistory(id: number): Promise<TaskEvent[]> {
+  return request<TaskEvent[]>(`/api/tasks/${id}/history`);
+}
+
+export function rateTask(id: number, score: number, comment: string): Promise<PetTask> {
+  return request<PetTask>(`/api/tasks/${id}/rating`, {
+    method: 'PUT', body: JSON.stringify({ score, comment: comment.trim() || null }),
+  });
 }
 
 export function createTask(input: TaskInput): Promise<PetTask> {

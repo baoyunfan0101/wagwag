@@ -1,6 +1,6 @@
 # WagWag
 
-Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. Module 2 adds posts, a chronological feed, likes, comments, and multi-image uploads. Module 3 adds follows, follow requests for private pets, block/mute controls, and a following feed. Module 4 adds communities, membership, community posts, moderation roles and rules, and discovery. Module 5 records GPS walks, supports optional background recording, and uses PostGIS for route geometry, distance, and nearby-route search. Module 6 lets a pet claim and contest territory from saved walks. Module 7A adds pet-care task posting, browsing, assignment, and completion. PostgreSQL remains the source of truth; Redis caches relationship status, counts, and short-lived leaderboards. The `dev` profile seeds the development user and pet (both ID 1), plus a demo neighbor pet (ID 1000) and an open task for trying the task flow.
+Module 1 implements a pet profile from Expo through a Spring Boot API to PostgreSQL. Module 2 adds posts, a chronological feed, likes, comments, and multi-image uploads. Module 3 adds follows, follow requests for private pets, block/mute controls, and a following feed. Module 4 adds communities, membership, community posts, moderation roles and rules, and discovery. Module 5 records GPS walks, supports optional background recording, and uses PostGIS for route geometry, distance, and nearby-route search. Module 6 lets a pet claim and contest territory from saved walks. Module 7 adds pet-care task posting, nearby discovery, assignment, completion, ratings, status history, and availability. PostgreSQL remains the source of truth; Redis caches relationship status, counts, and short-lived leaderboards. The `dev` profile seeds the development user and pet (both ID 1), plus a demo neighbor pet (ID 1000) and an open task for trying the task flow.
 
 ## Run locally
 
@@ -57,6 +57,8 @@ docker compose up -d postgres
 
 This deletes local PostgreSQL data, including posts and profiles, but leaves the SeaweedFS volume intact. If you set `COMPOSE_PROJECT_NAME`, replace `wagwag_postgres_data` with that project's PostgreSQL volume name. Before v1, schema and API contracts may change directly without backwards compatibility. Starting with v1, the committed schema becomes the production baseline, future database changes use incremental Flyway migrations, and compatibility with released clients is considered explicitly.
 
+The Module 7B task baseline adds generated PostGIS locations, ratings, status events, and availability tables. Reset an older local PostgreSQL volume with the commands above before running this baseline.
+
 ## API
 
 | Method | Path | Purpose |
@@ -106,7 +108,12 @@ This deletes local PostgreSQL data, including posts and profiles, but leaves the
 | POST | `/api/tasks` | Post a pet-care task as the active development pet |
 | GET | `/api/tasks?scope=open&limit=20&page=0` | Browse open tasks |
 | GET | `/api/tasks?scope=mine&limit=20&page=0` | List tasks created or accepted by the active pet |
+| GET | `/api/tasks/nearby?latitude=29.76&longitude=-95.37&radiusMeters=5000&limit=20&page=0` | Browse open tasks nearby, nearest first |
+| GET | `/api/tasks/profile` | Read the active pet's availability and received rating summary |
+| PUT | `/api/tasks/availability` | Enable or pause new task acceptance |
 | GET | `/api/tasks/{id}` | Read task details |
+| GET | `/api/tasks/{id}/history` | Read status history as creator or assignee |
+| PUT | `/api/tasks/{id}/rating` | Rate a completed task as creator |
 | POST | `/api/tasks/{id}/accept` | Accept an open task posted by another pet |
 | POST | `/api/tasks/{id}/start` | Start an accepted task as its assignee |
 | POST | `/api/tasks/{id}/complete` | Complete an in-progress task as its assignee |
@@ -128,9 +135,15 @@ Walks also store a PostGIS `LineString` in WGS84 (SRID 4326), with a GiST geogra
 
 Claiming a territory buffers the saved route by 20 meters in PostGIS and stores one immutable claim polygon per walk. `POST /api/walks/{id}/territory` returns 201 on the first claim and the same territory with 200 on retry. Claim strength starts at 1, increases by 1 for each 200 meters walked up to 5, and decreases by 1 every seven days to a minimum of 0. In overlapping ground, the claim with higher current strength controls the area; ties go to the newer claim. PostGIS calculates exclusive `ownedArea` and `ownedAreaSquareMeters` dynamically using spatial union and difference, so ownership can change as claims decay without rewriting claim history. `area` and `areaSquareMeters` remain the original footprint, while `contestedAreaSquareMeters` measures overlap with other pets' footprints. Only the active pet can read a claim's exact polygons or its history. The leaderboard exposes aggregate controlled area and pet names, caches results in Redis for up to one minute, and falls back to PostgreSQL if Redis is unavailable. This is a simple game rule, not an anti-cheat system.
 
-Post a task with `{ "title": "Walk Mochi", "description": "Short afternoon walk", "category": "DOG_WALKING", "latitude": 29.7604, "longitude": -95.3698 }`. Categories are `DOG_WALKING`, `PET_SITTING`, `FEEDING`, and `CHECK_IN`. Task lists return `{ "items": [...], "nextPage": 1 }` with zero-based pages and a 1-50 limit. State moves from `OPEN` to `ACCEPTED` to `IN_PROGRESS` to `COMPLETED`; the creator may cancel an open or accepted task. The task row is locked for state changes, so only one pet can accept it. This first version uses plain coordinates and has no payments, ratings, or nearby ranking.
+Post a task with `{ "title": "Walk Mochi", "description": "Short afternoon walk", "category": "DOG_WALKING", "latitude": 29.7604, "longitude": -95.3698 }`. Categories are `DOG_WALKING`, `PET_SITTING`, `FEEDING`, and `CHECK_IN`. Task lists return `{ "items": [...], "nextPage": 1 }` with zero-based pages and a 1-50 limit. State moves from `OPEN` to `ACCEPTED` to `IN_PROGRESS` to `COMPLETED`; the creator may cancel an open or accepted task. The task row is locked for state changes, so only one pet can accept it. Each successful transition records an event in the same transaction; retries that return an existing assignment do not duplicate events. History is available only to the creator and assignee.
 
 Blocked pets cannot discover or newly accept each other's tasks in either block direction. Existing creators and assignees retain access after a later block so they can finish or cancel an established task when its state permits. Task responses include `locationExact`: creators and assignees receive their task's exact stored coordinates with `true`; everyone else receives coordinates rounded to two decimal places with `false`. This applies to task detail and lists, including completed or cancelled tasks. It provides coarse location privacy, not anonymization. Mutes and private-profile settings do not hide marketplace entries.
+
+**Find tasks near me** searches within 5 km on mobile. The API accepts a radius of 1-20000 meters (default 5000) and returns `{ "items": [{ "task": {...}, "distanceMeters": 0 }], "nextPage": null }`. PostGIS filters and sorts by distance with spatial indexes, then creation time and ID as tie-breakers. For other pets' tasks, both the search radius and distance are calculated from the rounded public location; the creator can search their own exact location. Distance queries do not expose a hidden exact point.
+
+Use **Available to accept tasks** to pause new acceptance with `{ "acceptingTasks": false }`; existing assignments can still be started and completed. Creators can rate completed tasks with `{ "score": 5, "comment": "Great walk" }`, using 1-5 stars and an optional comment of up to 500 characters. Saving again updates the same rating. The assignee's **Pet-care tasks** screen shows their average and rating count. Task details show participant status history and the creator's rating. Payments and disputes remain future work; push delivery will be integrated with Module 8 messaging and notifications.
+
+To try both task roles locally, use `APP_DEV_PET_ID=1000` when restarting the dev API and set `EXPO_PUBLIC_DEV_PET_ID=1000` in the mobile environment, then restart Expo. This selects Biscuit for task actions; restore both IDs to `1` for Mochi. These fixed development identities allow testing both sides of a task before authentication is introduced.
 
 Create a community with `{ "name": "Houston Dog Parks", "description": "Local walks" }`. Its creator joins automatically; join and leave are idempotent. Community lists use zero-based `page` and `nextPage`. To post in a community, include `"communityId": 123` in the existing post request while joined. A post belongs to at most one community. Community feeds use the same newest-first cursor contract and respect existing private-profile, block, and mute visibility rules.
 

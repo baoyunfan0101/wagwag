@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getTasks, type PetTask } from '@/lib/api';
+import { getTasks, getTaskProfile, setTaskAvailability, type PetTask, type TaskProfile } from '@/lib/api';
 import { colors } from '@/lib/theme';
 
 export default function TasksScreen() {
@@ -16,19 +16,25 @@ export default function TasksScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<TaskProfile | null>(null);
+  const [availabilityBusy, setAvailabilityBusy] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const generation = useRef(0);
   const moreInFlight = useRef(false);
+  const profileVersion = useRef(0);
 
   const loadFirst = useCallback(async (refresh = false) => {
     const current = ++generation.current;
+    const profileReadVersion = profileVersion.current;
     setNextPage(null);
     setMoreError(null);
     if (refresh) setRefreshing(true);
     else { setLoading(true); setTasks([]); }
     try {
-      const result = await getTasks(scope);
+      const [result, currentProfile] = await Promise.all([getTasks(scope), getTaskProfile()]);
       if (current !== generation.current) return;
       setTasks(result.items);
+      if (profileReadVersion === profileVersion.current) setProfile(currentProfile);
       setNextPage(result.nextPage);
       setError(null);
     } catch (cause) {
@@ -39,6 +45,16 @@ export default function TasksScreen() {
   }, [scope]);
 
   useFocusEffect(useCallback(() => { void loadFirst(); return () => { generation.current++; }; }, [loadFirst]));
+
+  async function updateAvailability(value: boolean) {
+    if (availabilityBusy) return;
+    setAvailabilityBusy(true);
+    profileVersion.current++;
+    setProfileError(null);
+    try { setProfile(await setTaskAvailability(value)); }
+    catch (cause) { setProfileError(cause instanceof Error ? cause.message : 'Could not update availability.'); }
+    finally { profileVersion.current++; setAvailabilityBusy(false); }
+  }
 
   async function loadMore(retry = false) {
     if (nextPage === null || moreInFlight.current || loading || refreshing || (moreError && !retry)) return;
@@ -73,6 +89,20 @@ export default function TasksScreen() {
             <Ionicons name="add-circle" size={30} color={colors.accent} />
           </Pressable>
         </View>
+        {profile && <View style={styles.profile}>
+          <View style={styles.availability}>
+            <Text style={[styles.cardTitle, styles.availabilityText]}>Available to accept tasks</Text>
+            <Switch value={profile.acceptingTasks} disabled={availabilityBusy || loading || refreshing}
+              onValueChange={value => void updateAvailability(value)} trackColor={{ true: colors.green }} />
+          </View>
+          <Text style={styles.note}>{profile.averageRating === null ? 'No ratings yet' :
+            `${profile.averageRating.toFixed(1)} / 5 from ${profile.ratingCount} ratings`}</Text>
+        </View>}
+        {profileError && <Text style={styles.error}>{profileError}</Text>}
+        <Pressable style={styles.nearby} onPress={() => router.push('/task/nearby')}>
+          <Ionicons name="location-outline" size={19} color={colors.green} />
+          <Text style={styles.tabText}>Find tasks near me</Text>
+        </Pressable>
         <View style={styles.tabs}>
           {(['open', 'mine'] as const).map(value => <Pressable key={value}
             style={[styles.tab, scope === value && styles.activeTab]} onPress={() => setScope(value)}>
@@ -107,6 +137,11 @@ const styles = StyleSheet.create({
   activeTab: { backgroundColor: colors.green },
   tabText: { color: colors.green, fontWeight: '800' },
   activeTabText: { color: 'white' },
+  profile: { backgroundColor: colors.card, borderRadius: 16, padding: 16, marginBottom: 12 },
+  availability: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
+  availabilityText: { flex: 1 },
+  nearby: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: colors.greenPale, borderRadius: 14, padding: 14, marginBottom: 16 },
   card: { backgroundColor: colors.card, borderRadius: 16, padding: 18, marginBottom: 10,
     borderWidth: 1, borderColor: colors.line },
   cardTitle: { color: colors.ink, fontWeight: '800', fontSize: 17 },
