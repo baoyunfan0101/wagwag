@@ -990,7 +990,7 @@ Support pet-related goods and peer-to-peer listings.
 
 ## Phase 10A — Minimal End-to-End Solution
 
-Implemented: pet-scoped listings with optional HTTPS media links, newest-first cursor browsing, favorites, seller contact through direct messages, and an idempotent seller-only sold action. Phase 10B remains future work.
+Implemented: pet-scoped listings, newest-first cursor browsing, favorites, seller contact through direct messages, and an idempotent seller-only sold action. The current photo contract is described in Phase 10B.
 
 Features:
 
@@ -1014,6 +1014,8 @@ favorites
 ---
 
 ## Phase 10B — Complete Solution
+
+Implemented: compressed photo upload with immutable storage keys, PostgreSQL search, coarse-location nearby browsing, popularity suggestions, AVAILABLE/RESERVED/SOLD inventory, idempotent reservation orders, participant cancellation, seller handoff confirmation, and completed-order buyer ratings. Payments remain future work.
 
 Add:
 

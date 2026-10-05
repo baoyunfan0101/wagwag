@@ -3,6 +3,9 @@ package com.wagwag.api.listing;
 import com.wagwag.api.listing.ListingService.ListingPage;
 import com.wagwag.api.listing.ListingService.ListingResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import java.util.List;
+import com.wagwag.api.storage.S3Objects;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -30,9 +33,23 @@ public class ListingController {
     @GetMapping
     public ListingPage list(@RequestParam(defaultValue = "available") String scope,
                             @RequestParam(defaultValue = "20") int limit,
-                            @RequestParam(required = false) String cursor) {
-        return listings.list(scope, limit, cursor);
+                            @RequestParam(required = false) String cursor,
+                            @RequestParam(defaultValue = "") String query) {
+        return listings.list(scope, limit, cursor, query);
     }
+
+    @PostMapping("/media-uploads")
+    public S3Objects.UploadTicket upload(@Valid @RequestBody UploadInput input) { return listings.upload(input.contentType()); }
+
+    @GetMapping("/recommended")
+    public List<ListingResponse> recommended(@RequestParam(defaultValue = "10") int limit) { return listings.recommended(limit); }
+
+    @GetMapping("/nearby")
+    public ListingService.NearbyPage nearby(@RequestParam double latitude, @RequestParam double longitude,
+        @RequestParam(defaultValue = "5000") int radiusMeters, @RequestParam(defaultValue = "20") int limit,
+        @RequestParam(defaultValue = "0") int page) { return listings.nearby(latitude, longitude, radiusMeters, limit, page); }
+
+    public record UploadInput(@NotBlank String contentType) {}
 
     @GetMapping("/{id}")
     public ListingResponse detail(@PathVariable long id) { return listings.detail(id); }

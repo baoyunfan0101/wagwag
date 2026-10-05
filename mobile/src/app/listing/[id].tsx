@@ -1,10 +1,11 @@
+import * as Crypto from 'expo-crypto';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { DEV_PET_ID, favoriteListing, getListing, markListingSold, openConversation,
-  unfavoriteListing, type Listing } from '@/lib/api';
+  unfavoriteListing, reserveListing, type Listing } from '@/lib/api';
 import { formatListingPrice } from '@/lib/listingPrice';
 import { colors } from '@/lib/theme';
 
@@ -16,6 +17,7 @@ export default function ListingDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const orderId = useRef<string | null>(null);
   const [confirmSold, setConfirmSold] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,6 +55,20 @@ export default function ListingDetailScreen() {
     finally { busyRef.current = false; setBusy(false); }
   }
 
+  async function reserve() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    orderId.current ??= Crypto.randomUUID();
+    try {
+      const order = await reserveListing(id, orderId.current);
+      orderId.current = null;
+      router.push({ pathname: '/listing-order/[id]', params: { id: String(order.id) } });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not reserve this item.'); }
+    finally { busyRef.current = false; setBusy(false); }
+  }
+
   const mine = listing?.sellerPetId === DEV_PET_ID;
   return <SafeAreaView style={styles.safe}>
     <ScrollView contentContainerStyle={styles.content}>
@@ -68,9 +84,13 @@ export default function ListingDetailScreen() {
         </ScrollView> : <View style={styles.placeholder}><Ionicons name="paw-outline" size={56} color={colors.green} /></View>}
         <View style={styles.card}>
           <View style={styles.row}><Text style={styles.price}>{formatListingPrice(listing.priceCents)}</Text>
-            {listing.status === 'SOLD' && <Text style={styles.sold}>SOLD</Text>}</View>
+            {listing.status !== 'AVAILABLE' && <Text style={styles.sold}>{listing.status}</Text>}</View>
           <Text style={styles.title}>{listing.title}</Text>
           <Text style={styles.seller}>Listed by {listing.sellerName}</Text>
+          <Text style={styles.seller}>{listing.sellerAverageRating === null ? 'No seller ratings yet'
+            : `${listing.sellerAverageRating.toFixed(1)} / 5 from ${listing.sellerRatingCount} completed handoffs`}</Text>
+          {listing.latitude !== null && listing.longitude !== null && <Text style={styles.seller}>
+            Pickup neighborhood: {listing.latitude.toFixed(2)}, {listing.longitude.toFixed(2)}</Text>}
           <Text style={styles.description}>{listing.description}</Text>
           <Text style={styles.date}>Posted {new Date(listing.createdAt).toLocaleString()}</Text>
         </View>
@@ -83,6 +103,13 @@ export default function ListingDetailScreen() {
         {!mine && listing.status === 'AVAILABLE' && <Pressable style={styles.primary} disabled={busy} onPress={() => void contact()}>
           {busy ? <ActivityIndicator color="white" /> : <><Ionicons name="chatbubble-outline" size={19} color="white" />
             <Text style={styles.primaryText}>Contact seller</Text></>}
+        </Pressable>}
+        {!mine && listing.status === 'AVAILABLE' && <Pressable style={styles.secondary} disabled={busy} onPress={() => void reserve()}>
+          <Text style={styles.secondaryText}>Reserve item</Text>
+        </Pressable>}
+        {listing.myActiveOrderId && <Pressable style={styles.primary}
+          onPress={() => router.push({ pathname: '/listing-order/[id]', params: { id: String(listing.myActiveOrderId) } })}>
+          <Text style={styles.primaryText}>Open reserved order</Text>
         </Pressable>}
         {mine && listing.status === 'AVAILABLE' && (confirmSold ? <View style={styles.confirm}>
           <Text style={styles.note}>Mark this item sold? It will leave the Browse list.</Text>

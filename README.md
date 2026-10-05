@@ -13,7 +13,7 @@ A pre-v1 pet social app built with Expo / React Native and a Java 21 Spring Boot
 | 7 | Pet-care tasks, coarse public location, assignment, ratings, availability |
 | 8 | Direct messages, notifications, WebSocket updates, receipts, optional device push |
 | 9A / 9B | Video posts, async transcoding/compression, thumbnails, upload progress/retry, configurable CDN delivery |
-| 10A | Second-hand listings, browse, favorites, seller messaging, mark sold |
+| 10A / 10B | Second-hand photo listings, search, nearby browsing, suggestions, reservations, handoffs, seller ratings |
 
 ## Run locally
 

@@ -73,7 +73,7 @@ docker compose up -d postgres
 
 These commands delete local PostgreSQL data, including walks, messages, posts, and profiles. They preserve SeaweedFS data. If you set `COMPOSE_PROJECT_NAME`, replace the volume name with that project's PostgreSQL volume. No application command deletes this data automatically.
 
-The current baseline includes second-hand `listings`, `listing_media`, and `listing_favorites`. Reset an older local PostgreSQL volume before using this code. Starting with v1, the committed schema becomes production history; later schema changes use incremental Flyway migrations, and released API compatibility is evaluated explicitly.
+The current baseline includes second-hand inventory, coarse locations, search indexes, `listing_orders`, and `listing_ratings`. Reset an older local PostgreSQL volume before using this code. Starting with v1, the committed schema becomes production history; later schema changes use incremental Flyway migrations, and released API compatibility is evaluated explicitly.
 
 ## Video processing and media delivery
 
@@ -122,7 +122,7 @@ cd mobile
 npx expo export --platform all --output-dir /tmp/wagwag-export
 ~~~
 
-For the second-hand flow, browse Biscuit's seeded listing as Mochi, save it, open **Contact seller**, and mark a listing sold after switching to its seller's development identity. Phase 10A accepts optional HTTPS image links; phone photo upload is planned for Phase 10B.
+For the second-hand flow, publish with up to four photos and an optional neighborhood location, search for the item, and use **Near me**. Reserve Biscuit's seeded listing as Mochi, retry safely if interrupted, and open **My orders**. Switch to Biscuit to confirm the handoff, then back to Mochi to rate the seller. Cancellation makes the item available again. Item location is stored only after rounding to two decimals; arrange exact pickup details in messages. The existing SeaweedFS bucket stores listing photos with create-only upload tickets. Native photo selection/compression and location permissions still require a configured phone check.
 
 ### Manual device checks
 
