@@ -135,6 +135,22 @@ Blocked pets cannot discover or newly accept each other's tasks in either block 
 
 Use **Available to accept tasks** to pause new acceptance with `{ "acceptingTasks": false }`; existing assignments can still be started and completed. Creators can rate completed tasks with `{ "score": 5, "comment": "Great walk" }`, using 1-5 stars and an optional comment of up to 500 characters. Saving again updates the same rating. The assignee's **Pet-care tasks** screen shows their average and rating count. Task details show participant status history and the creator's rating. Payments and disputes remain future work; optional device push is described in the [development guide](DEVELOPMENT.md#device-push).
 
+## Second-hand listings
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| POST | `/api/listings` | Publish an item as the active development pet |
+| GET | `/api/listings?scope=available&limit=20` | Browse available items, newest first |
+| GET | `/api/listings?scope=favorites&limit=20&cursor=...` | Browse saved items |
+| GET | `/api/listings?scope=mine&limit=20&cursor=...` | Browse your items, including sold ones |
+| GET | `/api/listings/{id}` | Read an item |
+| POST / DELETE | `/api/listings/{id}/favorites` | Save or unsave an item idempotently |
+| POST | `/api/listings/{id}/sold` | Mark your item sold idempotently |
+
+Create with `{ "title": "Dog leash", "description": "Clean and adjustable", "priceCents": 1200, "imageUrls": ["https://example.com/leash.jpg"] }`. Price is in USD cents; zero means free. Listings accept 0-4 distinct HTTPS image links. Phase 10A does not upload listing photos to object storage; that is planned for Phase 10B. Responses include seller ID/name/avatar, title, description, price, status (`AVAILABLE` or `SOLD`), ordered `imageUrls`, `favoritedByMe`, and timestamps. The seller can mark an item sold; it leaves `available` but remains in `mine` and can remain in a buyer's `favorites` until unsaved. New favorites on sold items return 409.
+
+Lists return `{ "items": [...], "nextCursor": "..." }` in `(created_at DESC, id DESC)` order. `limit` defaults to 20 and must be 1-50; pass `nextCursor` back unchanged and treat it as opaque. A null cursor means the end. Blocks in either direction hide another pet's listings from browse, favorites, and detail, and prevent a new favorite or conversation. Mutes and private-profile settings do not hide listings. **Contact seller** opens or reuses the existing direct conversation using `POST /api/conversations` with `{ "petId": sellerPetId }`; it does not send a message automatically. This module does not process orders or payments.
+
 ## Messaging and notifications
 
 | Method | Path | Purpose |

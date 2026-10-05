@@ -100,6 +100,10 @@ export default function ProfileScreen() {
             <Ionicons name="briefcase-outline" size={18} color={colors.green} />
             <Text style={styles.privacyText}>Pet-care tasks</Text>
           </Pressable>
+          <Pressable style={styles.privacyButton} onPress={() => router.push('/marketplace')}>
+            <Ionicons name="storefront-outline" size={18} color={colors.green} />
+            <Text style={styles.privacyText}>Second-hand shop</Text>
+          </Pressable>
           <Pressable style={styles.privacyButton} onPress={() => router.push('/messages')}>
             <Ionicons name="chatbubbles-outline" size={18} color={colors.green} />
             <Text style={styles.privacyText}>Messages{unread.messages > 0 ? ` (${unread.messages})` : ''}</Text>

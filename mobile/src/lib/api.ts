@@ -107,6 +107,13 @@ export type TaskPage = { items: PetTask[]; nextPage: number | null };
 export type TaskRating = { score: number; comment: string | null; updatedAt: string };
 export type TaskProfile = { petId: number; acceptingTasks: boolean; averageRating: number | null; ratingCount: number };
 export type TaskEvent = { id: number; actorPetId: number; actorName: string; status: TaskStatus; createdAt: string };
+export type ListingInput = { title: string; description: string; priceCents: number; imageUrls: string[] };
+export type Listing = ListingInput & {
+  id: number; sellerPetId: number; sellerName: string; sellerAvatarUrl: string | null;
+  status: 'AVAILABLE' | 'SOLD'; favoritedByMe: boolean; createdAt: string; updatedAt: string;
+};
+export type ListingPage = { items: Listing[]; nextCursor: string | null };
+export type ListingScope = 'available' | 'favorites' | 'mine';
 export type NearbyTask = { task: PetTask; distanceMeters: number };
 export type NearbyTaskPage = { items: NearbyTask[]; nextPage: number | null };
 export type Conversation = { id: number; petId: number; petName: string; petAvatarUrl: string | null;
@@ -357,6 +364,31 @@ export function getTerritoryHistory(limit = 20, page = 0): Promise<TerritoryPage
 
 export function getTerritoryLeaderboard(limit = 20): Promise<TerritoryLeader[]> {
   return request<TerritoryLeader[]>(`/api/territories/leaderboard?limit=${limit}`);
+}
+
+export function getListings(scope: ListingScope = 'available', limit = 20, cursor?: string): Promise<ListingPage> {
+  const query = `scope=${scope}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+  return request<ListingPage>(`/api/listings?${query}`);
+}
+
+export function getListing(id: number): Promise<Listing> {
+  return request<Listing>(`/api/listings/${id}`);
+}
+
+export function createListing(input: ListingInput): Promise<Listing> {
+  return request<Listing>('/api/listings', { method: 'POST', body: JSON.stringify(input) });
+}
+
+export function favoriteListing(id: number): Promise<Listing> {
+  return request<Listing>(`/api/listings/${id}/favorites`, { method: 'POST' });
+}
+
+export function unfavoriteListing(id: number): Promise<Listing> {
+  return request<Listing>(`/api/listings/${id}/favorites`, { method: 'DELETE' });
+}
+
+export function markListingSold(id: number): Promise<Listing> {
+  return request<Listing>(`/api/listings/${id}/sold`, { method: 'POST' });
 }
 
 export function getTasks(scope: 'open' | 'mine' = 'open', limit = 20, page = 0): Promise<TaskPage> {
