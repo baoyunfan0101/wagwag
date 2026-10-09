@@ -11,5 +11,7 @@ public record ListingInput(
     @NotBlank @Size(max = 120) String title,
     @NotBlank @Size(max = 2000) String description,
     @NotNull @Min(0) @Max(100000000) Long priceCents,
-    @Size(max = 4) List<String> imageUrls
+    @Size(max = 4) List<String> imageKeys,
+    Double latitude,
+    Double longitude
 ) {}

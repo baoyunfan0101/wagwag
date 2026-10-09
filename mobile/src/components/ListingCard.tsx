@@ -13,7 +13,7 @@ export function ListingCard({ listing, onPress }: { listing: Listing; onPress: (
         {listing.favoritedByMe && <Ionicons name="heart" size={18} color={colors.accent} />}</View>
       <Text style={styles.title} numberOfLines={2}>{listing.title}</Text>
       <Text style={styles.seller} numberOfLines={1}>From {listing.sellerName}</Text>
-      {listing.status === 'SOLD' && <Text style={styles.sold}>Sold</Text>}
+      {listing.status !== 'AVAILABLE' && <Text style={styles.sold}>{listing.status === 'SOLD' ? 'Sold' : 'Reserved'}</Text>}
     </View>
   </Pressable>;
 }

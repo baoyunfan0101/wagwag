@@ -139,17 +139,34 @@ Use **Available to accept tasks** to pause new acceptance with `{ "acceptingTask
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| POST | `/api/listings/media-uploads` | Request a create-only image PUT ticket |
 | POST | `/api/listings` | Publish an item as the active development pet |
-| GET | `/api/listings?scope=available&limit=20` | Browse available items, newest first |
+| GET | `/api/listings?scope=available&query=leash&limit=20` | Search available items, newest first |
 | GET | `/api/listings?scope=favorites&limit=20&cursor=...` | Browse saved items |
-| GET | `/api/listings?scope=mine&limit=20&cursor=...` | Browse your items, including sold ones |
+| GET | `/api/listings?scope=mine&limit=20&cursor=...` | Browse your items, including reserved/sold ones |
+| GET | `/api/listings/nearby?latitude=29.76&longitude=-95.37&radiusMeters=5000&limit=20&page=0` | Browse available neighborhood items, nearest first |
+| GET | `/api/listings/recommended?limit=10` | Suggested available items from other sellers |
 | GET | `/api/listings/{id}` | Read an item |
 | POST / DELETE | `/api/listings/{id}/favorites` | Save or unsave an item idempotently |
-| POST | `/api/listings/{id}/sold` | Mark your item sold idempotently |
+| POST | `/api/listings/{id}/sold` | Mark your unreserved item sold idempotently |
+| POST | `/api/listings/{id}/orders` | Reserve an available item with a client UUID |
+| GET | `/api/listing-orders?limit=20&page=0` | List orders where you are buyer or seller |
+| GET | `/api/listing-orders/{id}` | Read an order as buyer or seller |
+| POST | `/api/listing-orders/{id}/cancel` | Cancel a reservation as either participant |
+| POST | `/api/listing-orders/{id}/complete` | Confirm handoff as seller |
+| PUT | `/api/listing-orders/{id}/rating` | Rate the seller as buyer after completion |
 
-Create with `{ "title": "Dog leash", "description": "Clean and adjustable", "priceCents": 1200, "imageUrls": ["https://example.com/leash.jpg"] }`. Price is in USD cents; zero means free. Listings accept 0-4 distinct HTTPS image links. Phase 10A does not upload listing photos to object storage; that is planned for Phase 10B. Responses include seller ID/name/avatar, title, description, price, status (`AVAILABLE` or `SOLD`), ordered `imageUrls`, `favoritedByMe`, and timestamps. The seller can mark an item sold; it leaves `available` but remains in `mine` and can remain in a buyer's `favorites` until unsaved. New favorites on sold items return 409.
+Request a photo ticket with `{ "contentType": "image/jpeg" }` (PNG/WebP also accepted). PUT the bytes with every returned header, including signed `If-None-Match: *`; the generated `pets/{petId}/listings/{uuid}.jpg` key cannot be overwritten. Create with `{ "title": "Dog leash", "description": "Clean and adjustable", "priceCents": 1200, "imageKeys": ["pets/1/listings/<uuid>.jpg"], "latitude": 29.760412, "longitude": -95.369845 }`. Images are optional, limited to four distinct keys, and verified using object metadata for the actor namespace, existence, supported type, and 1 byte to 5 MB. Direct image-link creation is no longer supported. Mobile compresses photos before uploading and reuses completed keys after a publishing failure.
 
-Lists return `{ "items": [...], "nextCursor": "..." }` in `(created_at DESC, id DESC)` order. `limit` defaults to 20 and must be 1-50; pass `nextCursor` back unchanged and treat it as opaque. A null cursor means the end. Blocks in either direction hide another pet's listings from browse, favorites, and detail, and prevent a new favorite or conversation. Mutes and private-profile settings do not hide listings. **Contact seller** opens or reuses the existing direct conversation using `POST /api/conversations` with `{ "petId": sellerPetId }`; it does not send a message automatically. This module does not process orders or payments.
+Price is USD cents; zero means free. Optional coordinates must be supplied together. The backend rounds them to two decimal places before storage and uses only that coarse point for all responses and nearby queries. Exact pickup addresses are not stored in listings. Coordinate rounding is coarse location privacy, not anonymization. Nearby pages use zero-based `page` and `nextPage`, a 1-50 limit, and a radius of 1-20000 meters. Listings without a location do not enter nearby results.
+
+Responses include seller ID/name/avatar, title, description, price, inventory status (`AVAILABLE`, `RESERVED`, `SOLD`), ordered `imageUrls`, `favoritedByMe`, timestamps, nullable coarse coordinates, `sellerAverageRating`, `sellerRatingCount`, and nullable `myActiveOrderId` for active order participants. Ordinary browse/search retains `(created_at DESC, id DESC)` keyset ordering and `{ "items": [...], "nextCursor": "..." }`. `query` searches title/description using PostgreSQL full-text search and is limited to 120 characters. `limit` defaults to 20 and must be 1-50. Treat cursors as opaque; null means the end. Recommendations are bounded to 1-20 items, ranked by favorite count then recency; they are a simple popularity heuristic.
+
+Blocks in either direction hide another pet's listings from browse, search, nearby, recommendations, favorites, and detail, and prevent new reservations or conversations. Mutes and private-profile settings do not hide marketplace listings. **Contact seller** uses the existing `POST /api/conversations` with `{ "petId": sellerPetId }` and sends no message automatically. Existing orders remain accessible to their participants after a later block so they can cancel or complete; blocks still prevent new messages.
+
+Reserve with `{ "clientOrderId": "a9ee0f56-095a-4ec8-bf87-e56531fdcdb9" }`; reuse the same UUID on network retry. It returns the same order, including after cancellation/completion. Reusing it for another listing returns 409. A listing row lock plus a unique active-order constraint allows only one buyer to reserve an item. The order stores the price agreed at reservation. Cancellation changes `RESERVED` to `CANCELLED` and makes inventory `AVAILABLE`; seller handoff confirmation changes it to `COMPLETED` and inventory to `SOLD`. These transitions are atomic and retries are idempotent. A reserved item cannot use the manual sold action; resolve its order instead. Unavailable items leave browse, but remain in seller listings and existing favorites. New favorites require availability; existing favorites can be removed.
+
+After completion, the buyer may save/update `{ "score": 5, "comment": "Friendly handoff" }`, with 1-5 stars and an optional comment up to 500 characters. Each completed order contributes one seller rating. Only the order participants can read its detailed rating; seller aggregates appear on listings. There are no payments, shipping, escrow, automatic reservation expiry, or dispute handling in this module.
 
 ## Messaging and notifications
 

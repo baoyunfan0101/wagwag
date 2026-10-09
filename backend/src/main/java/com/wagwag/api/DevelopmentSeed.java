@@ -36,9 +36,9 @@ public class DevelopmentSeed implements ApplicationRunner {
             jdbc.update("INSERT INTO task_events (task_id, actor_pet_id, status) VALUES (1000, 1000, 'OPEN')");
         }
 
-        jdbc.update("INSERT INTO listings (id, seller_pet_id, title, description, price_cents) "
+        jdbc.update("INSERT INTO listings (id, seller_pet_id, title, description, price_cents, latitude, longitude) "
             + "VALUES (1000, 1000, 'Adjustable dog leash', "
-            + "'Gently used leash for neighborhood walks.', 1200) ON CONFLICT (id) DO NOTHING");
+            + "'Gently used leash for neighborhood walks.', 1200, 29.76, -95.37) ON CONFLICT (id) DO NOTHING");
 
         jdbc.queryForObject("SELECT setval('users_id_seq', GREATEST((SELECT MAX(id) FROM users), "
             + "(SELECT last_value FROM users_id_seq)), true)", Long.class);

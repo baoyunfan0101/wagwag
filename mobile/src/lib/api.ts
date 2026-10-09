@@ -107,13 +107,23 @@ export type TaskPage = { items: PetTask[]; nextPage: number | null };
 export type TaskRating = { score: number; comment: string | null; updatedAt: string };
 export type TaskProfile = { petId: number; acceptingTasks: boolean; averageRating: number | null; ratingCount: number };
 export type TaskEvent = { id: number; actorPetId: number; actorName: string; status: TaskStatus; createdAt: string };
-export type ListingInput = { title: string; description: string; priceCents: number; imageUrls: string[] };
-export type Listing = ListingInput & {
+export type ListingInput = { title: string; description: string; priceCents: number; imageKeys: string[];
+  latitude?: number; longitude?: number };
+export type Listing = {
   id: number; sellerPetId: number; sellerName: string; sellerAvatarUrl: string | null;
-  status: 'AVAILABLE' | 'SOLD'; favoritedByMe: boolean; createdAt: string; updatedAt: string;
+  title: string; description: string; priceCents: number; imageUrls: string[];
+  status: 'AVAILABLE' | 'RESERVED' | 'SOLD'; favoritedByMe: boolean; createdAt: string; updatedAt: string;
+  latitude: number | null; longitude: number | null; sellerAverageRating: number | null;
+  sellerRatingCount: number; myActiveOrderId: number | null;
 };
 export type ListingPage = { items: Listing[]; nextCursor: string | null };
 export type ListingScope = 'available' | 'favorites' | 'mine';
+export type NearbyListingPage = { items: Listing[]; nextPage: number | null };
+export type ListingOrder = { id: number; clientOrderId: string; listingId: number; title: string;
+  sellerPetId: number; sellerName: string; buyerPetId: number; buyerName: string; priceCents: number;
+  status: 'RESERVED' | 'COMPLETED' | 'CANCELLED'; createdAt: string; updatedAt: string;
+  ratingScore: number | null; ratingComment: string | null };
+export type ListingOrderPage = { items: ListingOrder[]; nextPage: number | null };
 export type NearbyTask = { task: PetTask; distanceMeters: number };
 export type NearbyTaskPage = { items: NearbyTask[]; nextPage: number | null };
 export type Conversation = { id: number; petId: number; petName: string; petAvatarUrl: string | null;
@@ -366,8 +376,8 @@ export function getTerritoryLeaderboard(limit = 20): Promise<TerritoryLeader[]> 
   return request<TerritoryLeader[]>(`/api/territories/leaderboard?limit=${limit}`);
 }
 
-export function getListings(scope: ListingScope = 'available', limit = 20, cursor?: string): Promise<ListingPage> {
-  const query = `scope=${scope}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+export function getListings(scope: ListingScope = 'available', limit = 20, cursor?: string, search = ''): Promise<ListingPage> {
+  const query = `scope=${scope}&limit=${limit}&query=${encodeURIComponent(search)}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
   return request<ListingPage>(`/api/listings?${query}`);
 }
 
@@ -389,6 +399,21 @@ export function unfavoriteListing(id: number): Promise<Listing> {
 
 export function markListingSold(id: number): Promise<Listing> {
   return request<Listing>(`/api/listings/${id}/sold`, { method: 'POST' });
+}
+
+export function getRecommendedListings(): Promise<Listing[]> { return request('/api/listings/recommended'); }
+export function getNearbyListings(latitude: number, longitude: number, page = 0): Promise<NearbyListingPage> {
+  return request(`/api/listings/nearby?latitude=${latitude}&longitude=${longitude}&page=${page}`);
+}
+export function reserveListing(id: number, clientOrderId: string): Promise<ListingOrder> {
+  return request(`/api/listings/${id}/orders`, { method: 'POST', body: JSON.stringify({ clientOrderId }) });
+}
+export function getListingOrders(page = 0): Promise<ListingOrderPage> { return request(`/api/listing-orders?page=${page}`); }
+export function getListingOrder(id: number): Promise<ListingOrder> { return request(`/api/listing-orders/${id}`); }
+export function cancelListingOrder(id: number): Promise<ListingOrder> { return request(`/api/listing-orders/${id}/cancel`, { method: 'POST' }); }
+export function completeListingOrder(id: number): Promise<ListingOrder> { return request(`/api/listing-orders/${id}/complete`, { method: 'POST' }); }
+export function rateListingSeller(id: number, score: number, comment: string): Promise<ListingOrder> {
+  return request(`/api/listing-orders/${id}/rating`, { method: 'PUT', body: JSON.stringify({ score, comment }) });
 }
 
 export function getTasks(scope: 'open' | 'mine' = 'open', limit = 20, page = 0): Promise<TaskPage> {
@@ -445,7 +470,10 @@ export function createPost(input: PostInput): Promise<Post> {
   return request<Post>('/api/posts', { method: 'POST', body: JSON.stringify(input) });
 }
 
-export async function uploadPostImage(uri: string): Promise<string> {
+export function uploadPostImage(uri: string): Promise<string> { return uploadImage(uri, '/api/posts/media-uploads'); }
+export function uploadListingImage(uri: string): Promise<string> { return uploadImage(uri, '/api/listings/media-uploads'); }
+
+async function uploadImage(uri: string, path: string): Promise<string> {
   const image = Platform.OS === 'web'
     ? await fetch(uri).then((result) => result.blob())
     : new File(uri);
@@ -453,7 +481,7 @@ export async function uploadPostImage(uri: string): Promise<string> {
     throw new Error('Choose an image smaller than 5 MB.');
   }
   const ticket = await request<{ key: string; uploadUrl: string; headers: Record<string, string> }>(
-    '/api/posts/media-uploads',
+    path,
     { method: 'POST', body: JSON.stringify({ contentType: 'image/jpeg' }) },
   );
   try {

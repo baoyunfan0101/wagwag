@@ -8,7 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.jayway.jsonpath.JsonPath;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.List;
+import java.util.Map;
 import java.util.HashSet;
+import org.testcontainers.containers.GenericContainer;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -41,12 +48,23 @@ class ListingApiIntegrationTest {
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
         DockerImageName.parse("postgis/postgis:17-3.5").asCompatibleSubstituteFor("postgres"));
 
+    @Container
+    static final GenericContainer<?> storage = new GenericContainer<>("chrislusf/seaweedfs:4.48")
+        .withExposedPorts(8333).withEnv("S3_BUCKET", "wagwag-avatars");
+
+    static String storageUrl() { return "http://" + storage.getHost() + ":" + storage.getMappedPort(8333); }
+
     @DynamicPropertySource
     static void database(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("app.follow-cache.enabled", () -> false);
+        registry.add("app.storage.bucket", () -> "wagwag-avatars");
+        registry.add("app.storage.endpoint", ListingApiIntegrationTest::storageUrl);
+        registry.add("app.storage.public-base-url", () -> storageUrl() + "/wagwag-avatars");
+        registry.add("app.storage.access-key", () -> "testaccess");
+        registry.add("app.storage.secret-key", () -> "testsecret");
     }
 
     @Autowired MockMvc mvc;
@@ -57,6 +75,8 @@ class ListingApiIntegrationTest {
         jdbc.update("DELETE FROM pet_blocks");
         jdbc.update("DELETE FROM pet_mutes");
         jdbc.update("UPDATE pets SET private_profile = FALSE WHERE id = 1000");
+        jdbc.update("DELETE FROM listing_ratings");
+        jdbc.update("DELETE FROM listing_orders");
         jdbc.update("DELETE FROM listing_favorites");
         jdbc.update("DELETE FROM listing_media WHERE listing_id <> 1000");
         jdbc.update("DELETE FROM listings WHERE id <> 1000");
@@ -65,11 +85,13 @@ class ListingApiIntegrationTest {
 
     @Test
     void createBrowseAndMediaOrder() throws Exception {
-        long id = create("First listing");
+        String first = upload(new byte[] {1, 2, 3});
+        String second = upload(new byte[] {4, 5, 6});
+        long id = createImages(List.of(first, second));
         mvc.perform(get("/api/listings/{id}", id)).andExpect(status().isOk())
             .andExpect(jsonPath("$.sellerPetId").value(1))
-            .andExpect(jsonPath("$.imageUrls[0]").value("https://example.test/first.jpg"))
-            .andExpect(jsonPath("$.imageUrls[1]").value("https://example.test/second.jpg"));
+            .andExpect(jsonPath("$.imageUrls[0]").value(storageUrl() + "/wagwag-avatars/" + first))
+            .andExpect(jsonPath("$.imageUrls[1]").value(storageUrl() + "/wagwag-avatars/" + second));
         mvc.perform(get("/api/listings")).andExpect(status().isOk())
             .andExpect(jsonPath("$.items[0].id").value(id));
         mvc.perform(get("/api/listings").param("scope", "mine"))
@@ -211,14 +233,60 @@ class ListingApiIntegrationTest {
         for (String body : new String[] {
             "{\"title\":\" \",\"description\":\"Good\",\"priceCents\":100}",
             "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":-1}",
-            "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":100,\"imageUrls\":[\"http://example.test/a\"]}",
-            "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":100,\"imageUrls\":[\"HTTPS://example.test/a\"]}",
-            "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":100,\"imageUrls\":[\"https://example.test/a\",\"https://example.test/a\"]}"
+            "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":100,\"imageKeys\":[\"http://example.test/a\"]}",
+            "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":100,\"imageKeys\":[\"HTTPS://example.test/a\"]}",
+            "{\"title\":\"Toy\",\"description\":\"Good\",\"priceCents\":100,\"imageKeys\":[\"https://example.test/a\",\"https://example.test/a\"]}"
         }) {
             mvc.perform(post("/api/listings").contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest());
         }
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM listings", Long.class)).isEqualTo(1);
+    }
+
+    @Test
+    void listingUploadIsImmutableAndMetadataVerified() throws Exception {
+        String ticket = ticket();
+        String key = JsonPath.read(ticket, "$.key");
+        byte[] original = new byte[] {10, 20, 30};
+        assertThat(put(ticket, original)).isBetween(200, 299);
+        createImages(List.of(key));
+        int replacement = put(ticket, new byte[] {40, 50});
+        assertThat(replacement < 200 || replacement >= 300).isTrue();
+        String url = JsonPath.read(ticket, "$.publicUrl");
+        try (var client = HttpClient.newHttpClient()) {
+            byte[] served = client.send(HttpRequest.newBuilder(URI.create(url)).GET().build(), HttpResponse.BodyHandlers.ofByteArray()).body();
+            assertThat(served).containsExactly(original);
+        }
+        mvc.perform(post("/api/listings/media-uploads").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"contentType\":\"application/pdf\"}")).andExpect(status().isBadRequest());
+        String missing = JsonPath.read(ticket(), "$.key");
+        mvc.perform(post("/api/listings").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"Missing\",\"description\":\"Test\",\"priceCents\":0,\"imageKeys\":[\"" + missing + "\"]}"))
+            .andExpect(status().isBadRequest());
+        String oversized = upload(new byte[5 * 1024 * 1024 + 1]);
+        mvc.perform(post("/api/listings").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"title\":\"Large\",\"description\":\"Test\",\"priceCents\":0,\"imageKeys\":[\"" + oversized + "\"]}"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void searchNearbyAndRecommendationsRespectVisibilityAndCoarseLocation() throws Exception {
+        long own = created("{\"title\":\"Cat carrier\",\"description\":\"Travel crate\",\"priceCents\":0,"
+            + "\"latitude\":29.760412,\"longitude\":-95.369845}");
+        mvc.perform(get("/api/listings").param("query", "carrier"))
+            .andExpect(jsonPath("$.items.length()").value(1)).andExpect(jsonPath("$.items[0].id").value(own))
+            .andExpect(jsonPath("$.items[0].latitude").value(29.76)).andExpect(jsonPath("$.items[0].longitude").value(-95.37));
+        jdbc.update("UPDATE listings SET latitude = 29.76, longitude = -95.37 WHERE id = 1000");
+        mvc.perform(get("/api/listings/nearby").param("latitude", "29.76").param("longitude", "-95.37").param("limit", "1"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1)).andExpect(jsonPath("$.nextPage").value(1));
+        mvc.perform(get("/api/listings/recommended"))
+            .andExpect(jsonPath("$[0].id").value(1000));
+        jdbc.update("INSERT INTO pet_blocks (blocker_pet_id, blocked_pet_id) VALUES (1000, 1)");
+        mvc.perform(get("/api/listings/recommended")).andExpect(jsonPath("$.length()").value(0));
+        mvc.perform(get("/api/listings/nearby").param("latitude", "29.76").param("longitude", "-95.37"))
+            .andExpect(jsonPath("$.items.length()").value(1)).andExpect(jsonPath("$.items[0].id").value(own));
+        mvc.perform(get("/api/listings/nearby").param("latitude", "91").param("longitude", "0"))
+            .andExpect(status().isBadRequest());
     }
 
     private int favoriteAfterLatch(CountDownLatch ready, CountDownLatch go) throws Exception {
@@ -229,10 +297,41 @@ class ListingApiIntegrationTest {
 
     private long create(String title) throws Exception {
         String body = "{\"title\":\"" + title + "\",\"description\":\"Clean pet gear\","
-            + "\"priceCents\":1200,\"imageUrls\":[\"https://example.test/first.jpg\","
-            + "\"https://example.test/second.jpg\"]}";
+            + "\"priceCents\":1200,\"imageKeys\":[]}";
+        return created(body);
+    }
+
+    private long createImages(List<String> keys) throws Exception {
+        return created("{\"title\":\"First listing\",\"description\":\"Clean pet gear\",\"priceCents\":1200,\"imageKeys\":[\""
+            + String.join("\",\"", keys) + "\"]}");
+    }
+
+    private long created(String body) throws Exception {
         String content = mvc.perform(post("/api/listings").contentType(MediaType.APPLICATION_JSON).content(body))
             .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return ((Number) JsonPath.read(content, "$.id")).longValue();
+    }
+
+    private String upload(byte[] bytes) throws Exception {
+        String ticket = ticket();
+        assertThat(put(ticket, bytes)).isBetween(200, 299);
+        return JsonPath.read(ticket, "$.key");
+    }
+
+    private String ticket() throws Exception {
+        return mvc.perform(post("/api/listings/media-uploads").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"contentType\":\"image/jpeg\"}")).andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+    }
+
+    private int put(String ticket, byte[] bytes) throws Exception {
+        String url = JsonPath.read(ticket, "$.uploadUrl");
+        Map<String, String> headers = JsonPath.read(ticket, "$.headers");
+        var request = HttpRequest.newBuilder(URI.create(url));
+        headers.forEach(request::header);
+        try (var client = HttpClient.newHttpClient()) {
+            return client.send(request.PUT(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),
+                HttpResponse.BodyHandlers.discarding()).statusCode();
+        }
     }
 }
